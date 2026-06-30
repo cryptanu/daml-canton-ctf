@@ -1,0 +1,5 @@
+.daml/
+.daml-cache/
+.daml-build/
+*.dar
+.DS_Store

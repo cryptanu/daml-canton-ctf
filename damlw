@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# DAML binary resolution.
+if command -v daml >/dev/null 2>&1; then
+  DAML_BIN="$(command -v daml)"
+elif [ -x "${HOME}/.daml/bin/daml" ]; then
+  DAML_BIN="${HOME}/.daml/bin/daml"
+else
+  echo "error: DAML CLI not found. Install with: curl -fsSL https://get.daml.com/ | sh -s 3.4.10" >&2
+  exit 1
+fi
+
+# Prefer Homebrew OpenJDK 17 for daml test/script execution.
+JDK17_HOME="/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+if [ -d "${JDK17_HOME}" ]; then
+  export JAVA_HOME="${JDK17_HOME}"
+  export PATH="/opt/homebrew/opt/openjdk@17/bin:${PATH}"
+fi
+
+exec "${DAML_BIN}" "$@"

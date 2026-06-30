@@ -1,0 +1,22 @@
+module Solution where
+
+import Daml.Script
+import Damlnaut.Level0
+
+solveLevel0 : Script (ContractId Flag)
+solveLevel0 = script do
+  player <- allocateParty "level0-player"
+
+  instanceCid <- submit player do
+    createCmd Level0Instance with
+      player = player
+      instructions = "Exercise SubmitLevel0 to mint the local MVP flag."
+
+  flagCid <- submit player do
+    exerciseCmd instanceCid SubmitLevel0
+
+  Some flag <- queryContractId player flagCid
+  assertMsg "FLAG_LEVEL_MISMATCH" (flag.level == "level-0")
+  assertMsg "FLAG_VALUE_MISMATCH" (flag.value == "flag{daml_local_mvp_ready}")
+
+  pure flagCid
