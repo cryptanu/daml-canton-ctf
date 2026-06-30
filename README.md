@@ -1,20 +1,50 @@
 # Daml Canton CTF
 
-A beginner-friendly Daml/Canton security CTF inspired by Ethernaut-style levels, starting with a local-only MVP.
+A beginner-friendly Daml/Canton security CTF inspired by Ethernaut-style levels.
 
-Level 0 is intentionally simple: it verifies that a player can run a Daml Script, create a challenge instance, submit the instance, and receive a `Flag` contract.
+The first demo is intentionally lightweight: the GitHub repository remains private, the frontend runs locally, there is no login, and Level 0 uses client-side flag validation. This is enough to demonstrate the product loop before adding a hosted Canton/Daml backend.
 
-## Current Level
+## What Exists Now
+
+### Web Demo
+
+The React/Vite frontend provides:
+
+- A homepage with available level tiles.
+- A Level 0 challenge page.
+- Full Daml source display.
+- Local run instructions.
+- A flag submission box.
+- Client-side validation for the Level 0 flag.
+
+Run it locally:
+
+```sh
+npm install
+npm run dev
+```
+
+Then open the URL printed by Vite, usually:
+
+```text
+http://localhost:5173
+```
+
+Build the frontend:
+
+```sh
+npm run build
+```
 
 ### Level 0: Local Submit
 
 Objective:
 
 ```text
-Run the local solution script and mint a Flag.
+Run the local Daml solution script and mint a Flag.
 ```
 
-There is no wallet setup for Level 0. In Daml, the local MVP identity is a `Party` allocated by Daml Script.
+There is no wallet setup for Level 0. In the local MVP, the player identity is a Daml `Party` allocated by Daml Script.
 
 The script:
 
@@ -24,23 +54,22 @@ The script:
 4. Receives a `Flag` contract.
 5. Asserts that the expected flag value was created.
 
-## Requirements
-
-- Daml SDK `3.4.10` or compatible.
-- Java runtime supported by the Daml SDK.
-
-This repo includes a small `./damlw` wrapper that uses the installed `daml` binary and prefers Homebrew OpenJDK 17 when available.
-
-## Run
+Run the Daml check:
 
 ```sh
 ./damlw test
 ```
 
+Or:
+
+```sh
+npm run ctf:test
+```
+
 Expected result:
 
 ```text
-Solution:solveLevel0: ok
+daml/Solution.daml:solveLevel0: ok
 ```
 
 ## Files
@@ -48,23 +77,41 @@ Solution:solveLevel0: ok
 ```text
 daml/Damlnaut/Level0.daml  # challenge templates
 daml/Solution.daml         # local MVP submit script
-daml.yaml                  # Daml package config
-scripts/check.sh           # convenience test runner
+src/main.tsx                # frontend app
+src/styles.css              # frontend visual system
+daml.yaml                   # Daml package config
+scripts/check.sh            # Daml test runner
 ```
 
-## Design Notes
+## Current Tradeoff
 
-This project starts without hosted infrastructure on purpose.
+This initial version does **not** attempt cheating resistance.
 
-For the local MVP:
+That means:
 
-- A player is a Daml `Party`.
-- Submission is a Daml Script transaction sequence.
-- Completion is proven by creating a `Flag` contract.
-- No real Canton wallet, validator, or web scoreboard is required.
+- The flag is visible in local source.
+- The browser validates the submitted flag client-side.
+- This is suitable for an Amar/OZ demo of the UX and CTF concept.
+- It is not suitable for a public competitive CTF yet.
 
-Later levels can add an Ethernaut-like registry flow:
+A later hosted version should move validation behind a backend:
 
 ```text
-Create Instance -> Exploit Instance -> Submit Instance -> Judge Creates Flag
+Create Instance -> Exploit Instance -> Submit Proof -> Backend Validates Ledger State -> Backend Returns Flag
 ```
+
+## Design Direction
+
+Future levels should follow an Ethernaut-like flow:
+
+```text
+Create Instance -> Read Source -> Exploit Daml Contract Flow -> Submit Flag
+```
+
+Candidate next levels:
+
+1. Market Rebinding
+2. Authorization Replay
+3. Oracle Proposal Replay
+4. Fragmented Holdings
+5. Residual Debt Liquidation
