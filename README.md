@@ -41,7 +41,7 @@ npm run build
 Objective:
 
 ```text
-Run the local Daml solution script and mint a Flag.
+Run the local Daml solution script, create a proof contract, and copy the demo flag printed by the local harness.
 ```
 
 There is no wallet setup for Level 0. In the local MVP, the player identity is a Daml `Party` allocated by Daml Script.
@@ -51,8 +51,8 @@ The script:
 1. Allocates a player party.
 2. Creates a `Level0Instance`.
 3. Exercises `SubmitLevel0`.
-4. Receives a `Flag` contract.
-5. Asserts that the expected flag value was created.
+4. Receives a `FlagProof` contract.
+5. Asserts that the proof is tied to the expected level and instance.
 
 Run the Daml check:
 
@@ -76,7 +76,7 @@ daml/Solution.daml:solveLevel0: ok
 
 ```text
 daml/Damlnaut/Level0.daml  # challenge templates
-daml/Solution.daml         # local MVP submit script
+daml/Solution.daml         # local MVP reference script (not shown in the web source panel)
 src/main.tsx                # frontend app
 src/styles.css              # frontend visual system
 daml.yaml                   # Daml package config
@@ -89,7 +89,7 @@ This initial version does **not** attempt cheating resistance.
 
 That means:
 
-- The flag is visible in local source.
+- The demo flag is printed by the local check script, not embedded in the displayed challenge source.
 - The browser validates the submitted flag client-side.
 - This is suitable for an Amar/OZ demo of the UX and CTF concept.
 - It is not suitable for a public competitive CTF yet.

@@ -1,12 +1,13 @@
 module Damlnaut.Level0 where
 
--- A local-only CTF flag. In a hosted version, this would usually include a
--- scoreboard observer so the backend can index solved levels.
-template Flag
+-- Level 0 produces an on-ledger proof that the player exercised the instance.
+-- A hosted version can validate this proof, then issue a server-generated flag.
+template FlagProof
   with
     solver : Party
     level : Text
-    value : Text
+    instanceCid : ContractId Level0Instance
+    proof : Text
   where
     signatory solver
 
@@ -18,10 +19,11 @@ template Level0Instance
   where
     signatory player
 
-    choice SubmitLevel0 : ContractId Flag
+    choice SubmitLevel0 : ContractId FlagProof
       controller player
       do
-        create Flag with
+        create FlagProof with
           solver = player
           level = "level-0"
-          value = "flag{daml_local_mvp_ready}"
+          instanceCid = self
+          proof = "level-0-submitted"
