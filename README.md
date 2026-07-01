@@ -10,9 +10,10 @@ The first demo is intentionally lightweight: the GitHub repository remains priva
 
 The React/Vite frontend provides:
 
-- A homepage with available level tiles.
+- A row-based level ledger inspired by terminal/CTF interfaces.
 - A Level 0 challenge page.
 - Full Daml source display for the challenge and shared flag issuer.
+- Light and dark visual modes.
 - Local run instructions.
 - A flag submission box.
 - Client-side validation for the Level 0 flag.
