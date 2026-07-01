@@ -1,0 +1,35 @@
+{
+  "name": "Daml Canton CTF",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "DAML_SDK_VERSION": "3.4.10"
+    }
+  },
+  "remoteUser": "node",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [
+    5173
+  ],
+  "portsAttributes": {
+    "5173": {
+      "label": "Damlnaut frontend",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "postCreateCommand": "npm ci && ./damlw version",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "DigitalAssetHoldingsLLC.daml",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": false
+      }
+    }
+  }
+}

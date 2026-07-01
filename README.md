@@ -6,6 +6,37 @@ The first demo is intentionally lightweight: the GitHub repository remains priva
 
 ## What Exists Now
 
+### GitHub Codespaces
+
+The repo includes a devcontainer for GitHub Codespaces.
+
+Open in Codespaces:
+
+```text
+https://codespaces.new/cryptanu/daml-canton-ctf?quickstart=1
+```
+
+The container installs:
+
+- Node 22
+- Java 17
+- Daml SDK `3.4.10`
+- Project npm dependencies via `npm ci`
+
+After the Codespace finishes setup, run:
+
+```sh
+npm run dev
+```
+
+Then open the forwarded `5173` port preview.
+
+Run the Daml level check:
+
+```sh
+npm run ctf:test
+```
+
 ### Web Demo
 
 The React/Vite frontend provides:
