@@ -1,29 +1,24 @@
 module Damlnaut.Level0 where
 
--- Level 0 produces an on-ledger proof that the player exercised the instance.
--- A hosted version can validate this proof, then issue a server-generated flag.
-template FlagProof
-  with
-    solver : Party
-    level : Text
-    instanceCid : ContractId Level0Instance
-    proof : Text
-  where
-    signatory solver
+import Damlnaut.FlagIssuer
 
 -- Level 0 proves the player can create a local instance and submit it.
 template Level0Instance
   with
     player : Party
+    issuer : Party
+    instanceId : Text
     instructions : Text
   where
     signatory player
+    observer issuer
 
     choice SubmitLevel0 : ContractId FlagProof
       controller player
       do
         create FlagProof with
           solver = player
+          issuer = issuer
           level = "level-0"
-          instanceCid = self
+          instanceId = instanceId
           proof = "level-0-submitted"

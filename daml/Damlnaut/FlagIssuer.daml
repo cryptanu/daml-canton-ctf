@@ -1,0 +1,52 @@
+module Damlnaut.FlagIssuer where
+
+-- Shared proof shape for all levels. Each level creates a FlagProof when its
+-- win condition has been satisfied. A hosted backend can act as issuer later.
+template FlagProof
+  with
+    solver : Party
+    issuer : Party
+    level : Text
+    instanceId : Text
+    proof : Text
+  where
+    signatory solver
+    observer issuer
+
+-- Final flag visible to the solver after the issuer validates a proof.
+template Flag
+  with
+    issuer : Party
+    solver : Party
+    level : Text
+    instanceId : Text
+    value : Text
+  where
+    signatory issuer
+    observer solver
+
+-- Reusable flag issuer for local MVP and future hosted validation.
+template FlagIssuer
+  with
+    issuer : Party
+    level : Text
+    expectedProof : Text
+    flagValue : Text
+  where
+    signatory issuer
+
+    choice IssueFlag : ContractId Flag
+      with
+        proofCid : ContractId FlagProof
+      controller issuer
+      do
+        proof <- fetch proofCid
+        assertMsg "WRONG_ISSUER" (proof.issuer == issuer)
+        assertMsg "WRONG_LEVEL" (proof.level == level)
+        assertMsg "WRONG_PROOF" (proof.proof == expectedProof)
+        create Flag with
+          issuer = issuer
+          solver = proof.solver
+          level = level
+          instanceId = proof.instanceId
+          value = flagValue

@@ -1,23 +1,37 @@
 module Solution where
 
 import Daml.Script
+import Damlnaut.FlagIssuer
 import Damlnaut.Level0
 
-solveLevel0 : Script (ContractId FlagProof)
+solveLevel0 : Script (ContractId Flag)
 solveLevel0 = script do
+  issuer <- allocateParty "level0-issuer"
   player <- allocateParty "level0-player"
+
+  issuerCid <- submit issuer do
+    createCmd FlagIssuer with
+      issuer = issuer
+      level = "level-0"
+      expectedProof = "level-0-submitted"
+      flagValue = "flag{daml_local_mvp_ready}"
 
   instanceCid <- submit player do
     createCmd Level0Instance with
       player = player
+      issuer = issuer
+      instanceId = "level-0-local-instance"
       instructions = "Exercise SubmitLevel0 to create the Level 0 proof."
 
   proofCid <- submit player do
     exerciseCmd instanceCid SubmitLevel0
 
-  Some proof <- queryContractId player proofCid
-  assertMsg "PROOF_LEVEL_MISMATCH" (proof.level == "level-0")
-  assertMsg "PROOF_INSTANCE_MISMATCH" (proof.instanceCid == instanceCid)
-  assertMsg "PROOF_VALUE_MISMATCH" (proof.proof == "level-0-submitted")
+  flagCid <- submit issuer do
+    exerciseCmd issuerCid IssueFlag with proofCid = proofCid
 
-  pure proofCid
+  Some flag <- queryContractId player flagCid
+  assertMsg "FLAG_LEVEL_MISMATCH" (flag.level == "level-0")
+  assertMsg "FLAG_INSTANCE_MISMATCH" (flag.instanceId == "level-0-local-instance")
+  assertMsg "FLAG_VALUE_MISMATCH" (flag.value == "flag{daml_local_mvp_ready}")
+
+  pure flagCid

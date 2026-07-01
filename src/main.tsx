@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import flagIssuerSource from '../daml/Damlnaut/FlagIssuer.daml?raw';
 import level0Source from '../daml/Damlnaut/Level0.daml?raw';
 import './styles.css';
 
@@ -26,16 +27,17 @@ const levels: Level[] = [
     difficulty: 'Warmup',
     theme: 'Ledger handshake',
     summary:
-      'Prove your local Daml setup works by creating a Level0Instance, exercising SubmitLevel0, and producing the first proof contract.',
-    objective: 'Run the local solution script and paste the generated flag.',
+      'Prove your local Daml setup works by creating a Level0Instance, exercising SubmitLevel0, and having the issuer convert your proof into a flag.',
+    objective: 'Create a proof, have the issuer mint a flag, then paste the generated value.',
     flag: 'flag{daml_local_mvp_ready}',
     files: [
       { name: 'daml/Damlnaut/Level0.daml', body: level0Source },
+      { name: 'daml/Damlnaut/FlagIssuer.daml', body: flagIssuerSource },
     ],
     steps: [
       'Clone or open the private CTF repo locally.',
       'Run ./damlw test or npm run ctf:test from the repository root.',
-      'Confirm Solution:solveLevel0 returns ok.',
+      'Confirm Solution:solveLevel0 returns ok after the issuer mints a Flag.',
       'Paste the demo flag printed by the local check script into the submission box.',
     ],
   },
@@ -232,8 +234,9 @@ function LevelPage({ level, onBack }: { level: Level; onBack: () => void }) {
           <p>
             Level 0 is intentionally not adversarial. It proves the player can run a
             Daml Script, allocate a local party, create an instance, exercise a choice,
-            and observe a proof contract. This keeps the first interaction focused on the
-            Daml mental model instead of infrastructure ceremony.
+            observe a proof contract, and let the issuer convert that proof into a flag.
+            This keeps the first interaction focused on the Daml mental model instead of
+            infrastructure ceremony.
           </p>
           <ol>
             {level.steps.map((step) => (
@@ -278,9 +281,9 @@ function LevelPage({ level, onBack }: { level: Level; onBack: () => void }) {
           <p className="eyebrow">Submit</p>
           <h2>Paste your flag</h2>
           <p>
-            Initial demo mode uses client-side validation. The displayed challenge source
-            intentionally creates only a proof contract; a later backend will validate that
-            proof before issuing a real flag.
+            Initial demo mode uses client-side validation. The durable submission pattern is
+            already in place: level code creates a proof, then the issuer validates that
+            proof and mints the final flag.
           </p>
           <form onSubmit={submitFlag}>
             <label htmlFor="flag-input">Flag</label>
