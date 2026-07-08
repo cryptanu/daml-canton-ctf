@@ -1,7 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import flagIssuerSource from '../daml/Damlnaut/FlagIssuer.daml?raw';
 import level0Source from '../daml/Damlnaut/Level0.daml?raw';
+import {
+  type FlagRecord,
+  type Level0InstanceRecord,
+  type VerifyLevel0Response,
+} from '../shared/damlnaut';
+import {
+  clearStoredWallet,
+  connectWallet,
+  loadStoredWallet,
+  resumeWallet,
+  saveStoredWallet,
+  type WalletSession,
+} from './canton/damlLedger';
 import './styles.css';
 
 type View = 'levels' | 'architecture' | 'about';
@@ -19,42 +32,55 @@ type Level = {
   microflowOn: number;
   summary: string;
   objective: string;
-  flag: string;
   files: SourceFile[];
   steps: string[];
   logLines: string[];
 };
 
-const DEMO_FLAG = 'flag{daml_local_mvp_ready}';
+type WalletUiState = {
+  phase: 'idle' | 'connecting' | 'connected' | 'error';
+  session: WalletSession | null;
+  message: string;
+};
+
+type Level0UiState = {
+  phase: 'idle' | 'bootstrapping' | 'ready' | 'solving' | 'verifying' | 'solved' | 'error';
+  instance: Level0InstanceRecord | null;
+  proofCid: string | null;
+  flag: FlagRecord | null;
+  txSummary: string | null;
+  verificationMessage: string | null;
+  error: string | null;
+};
 
 const LEVELS: Level[] = [
   {
     id: 'level-0',
     index: '00',
     title: 'The bare proof',
-    desc: 'instance exposes one choice -> FlagProof',
+    desc: 'wallet session -> instance -> submit proof -> verifier flag',
     status: 'live',
     stateLabel: 'live',
-    microflowOn: 2,
+    microflowOn: 3,
     summary:
-      'Prove your local Daml setup works by creating a Level0Instance, exercising SubmitLevel0, and having the issuer convert your proof into a flag.',
-    objective: 'Create a proof, have the issuer mint a flag, then paste the generated value.',
-    flag: DEMO_FLAG,
+      'Connect a Canton wallet on the localnet, bootstrap your Level0Instance, exercise SubmitLevel0 through the Daml SDK, and let the verifier mint the final flag.',
+    objective:
+      'Drive the full dApp loop: connected party, active instance, signed solve transaction, verified proof, solved state.',
     files: [
       { id: 'level0', name: 'Level0.daml', body: level0Source },
       { id: 'issuer', name: 'FlagIssuer.daml', body: flagIssuerSource },
     ],
     steps: [
-      'Open the private CTF repo locally.',
-      'Run ./damlw test or npm run ctf:test from the repository root.',
-      'Confirm Solution:solveLevel0 returns ok after the issuer mints a Flag.',
-      'Paste the demo flag printed by the local check script into the submission box.',
+      'Click connect. The backend allocates a fresh player party on the canton localnet.',
+      'Open Level 0. The frontend calls Ledger.create Level0Instance for that party.',
+      'Approve solve. The frontend calls Ledger.exercise SubmitLevel0, producing a FlagProof.',
+      'Verify. The backend, acting as issuer, exercises IssueFlag against your FlagProof.',
     ],
     logLines: [
-      'exercising the exposed choice does not return a flag.',
-      'it returns a FlagProof: an attestation only.',
-      'a shared issuer converts proofs into flags downstream.',
-      'read Level0.daml and FlagIssuer.daml before submitting.',
+      'the connected party is the source of truth for this run.',
+      'level open bootstraps a player-specific instance directly on canton.',
+      'wallet execution creates FlagProof, not the final flag.',
+      'the backend issuer re-checks issuer, level, instance, and proof fields.',
     ],
   },
   {
@@ -66,9 +92,8 @@ const LEVELS: Level[] = [
     stateLabel: 'locked',
     microflowOn: 0,
     summary:
-      'A position opened against one market later accepts a caller-supplied market context. This preserves the earlier Market Rebinding content under the new ledger-style name.',
+      'A position opened against one market later accepts a caller-supplied market context. Preserves the earlier Market Rebinding content under the new ledger-style name.',
     objective: 'Exploit market context drift to mint a flag.',
-    flag: '',
     files: [],
     steps: [],
     logLines: [],
@@ -82,24 +107,182 @@ const LEVELS: Level[] = [
     stateLabel: 'locked',
     microflowOn: 0,
     summary:
-      'A delegation object survives longer than intended and can be reused across actions. This preserves the earlier Authorization Replay content under the new ledger-style name.',
+      'A delegation object survives longer than intended and can be reused across actions. Preserves the earlier Authorization Replay content under the new ledger-style name.',
     objective: 'Reuse an authorization capability outside its intended scope.',
-    flag: '',
     files: [],
     steps: [],
     logLines: [],
   },
 ];
 
+const INITIAL_WALLET_STATE: WalletUiState = {
+  phase: 'idle',
+  session: null,
+  message: 'idle',
+};
+
+const INITIAL_LEVEL0_STATE: Level0UiState = {
+  phase: 'idle',
+  instance: null,
+  proofCid: null,
+  flag: null,
+  txSummary: null,
+  verificationMessage: null,
+  error: null,
+};
+
 function App() {
   const [view, setView] = useState<View>('levels');
   const [openLevelId, setOpenLevelId] = useState<string | null>(null);
   const [theme, setTheme] = useTheme();
+  const [walletState, setWalletState] = useState<WalletUiState>(INITIAL_WALLET_STATE);
+  const [level0State, setLevel0State] = useState<Level0UiState>(INITIAL_LEVEL0_STATE);
+  const bootstrapRef = useRef<string | null>(null);
+  const resumeAttempted = useRef(false);
 
-  const openLevel = useMemo(
-    () => LEVELS.find((level) => level.id === openLevelId) ?? null,
-    [openLevelId],
-  );
+  const openLevel = LEVELS.find((level) => level.id === openLevelId) ?? null;
+
+  // Auto-resume from localStorage on first mount. If Canton has since been
+  // reset (party no longer exists), silently drop to idle.
+  useEffect(() => {
+    if (resumeAttempted.current) return;
+    resumeAttempted.current = true;
+    const stored = loadStoredWallet();
+    if (!stored) return;
+    setWalletState({
+      phase: 'connecting',
+      session: null,
+      message: 'resuming canton session...',
+    });
+    void resumeWallet(getApiBase(), stored.party)
+      .then((session) => {
+        setWalletState({
+          phase: 'connected',
+          session,
+          message: session.connection.networkId,
+        });
+      })
+      .catch(() => {
+        clearStoredWallet();
+        setWalletState(INITIAL_WALLET_STATE);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (openLevelId !== 'level-0' || !walletState.session) {
+      return;
+    }
+    const party = walletState.session.connection.party;
+    if (level0State.instance?.payload.player === party) {
+      return;
+    }
+    if (bootstrapRef.current === party) {
+      return;
+    }
+    bootstrapRef.current = party;
+    void bootstrapLevel0(walletState.session, setLevel0State).finally(() => {
+      bootstrapRef.current = null;
+    });
+  }, [openLevelId, walletState.session, level0State.instance?.payload.player]);
+
+  const connect = async () => {
+    setWalletState({
+      phase: 'connecting',
+      session: null,
+      message: 'allocating party on canton localnet...',
+    });
+    try {
+      const session = await connectWallet(getApiBase());
+      saveStoredWallet({
+        party: session.connection.party,
+        networkId: session.connection.networkId,
+        savedAt: Date.now(),
+      });
+      setWalletState({
+        phase: 'connected',
+        session,
+        message: `${session.connection.networkId}`,
+      });
+      setLevel0State(INITIAL_LEVEL0_STATE);
+    } catch (error) {
+      setWalletState({
+        phase: 'error',
+        session: null,
+        message: errorMessage(error),
+      });
+    }
+  };
+
+  const disconnect = () => {
+    clearStoredWallet();
+    setWalletState(INITIAL_WALLET_STATE);
+    setLevel0State(INITIAL_LEVEL0_STATE);
+  };
+
+  const solveLevel0 = async () => {
+    const session = walletState.session;
+    const cachedInstance = level0State.instance;
+    if (!session || !cachedInstance) return;
+
+    setLevel0State((current) => ({
+      ...current,
+      phase: 'solving',
+      error: null,
+      verificationMessage: 'signing SubmitLevel0 via Daml SDK...',
+    }));
+
+    try {
+      // SubmitLevel0 is consuming — the instance is archived the moment we
+      // exercise. On a retry the cached CID is stale. Refresh from the
+      // ledger and, if it's gone, create a fresh instance before solving.
+      const active = await session.ledger.findLevel0Instance();
+      let instance = cachedInstance;
+      if (!active || active.contractId !== cachedInstance.contractId) {
+        instance =
+          active ??
+          (await session.ledger.createLevel0Instance(instanceIdFor(session.connection.party)));
+        setLevel0State((current) => ({
+          ...current,
+          instance,
+          proofCid: null,
+          flag: null,
+          txSummary: null,
+          verificationMessage: 'previous instance was archived; created a fresh one.',
+        }));
+      }
+      const proof = await session.ledger.submitLevel0(instance);
+      setLevel0State((current) => ({
+        ...current,
+        phase: 'verifying',
+        proofCid: proof.contractId,
+        txSummary: proof.updateId ? `updateId ${proof.updateId}` : null,
+        verificationMessage: 'FlagProof created. Waiting for issuer to mint the flag...',
+      }));
+
+      const verify = await postJson<VerifyLevel0Response>(
+        `${getApiBase()}/api/levels/0/verify`,
+        { party: session.connection.party },
+      );
+
+      setLevel0State((current) => ({
+        ...current,
+        phase: verify.verified ? 'solved' : 'ready',
+        flag: verify.flag,
+        verificationMessage: verify.message,
+      }));
+    } catch (error) {
+      setLevel0State((current) => ({
+        ...current,
+        phase: 'error',
+        error: errorMessage(error),
+      }));
+    }
+  };
+
+  const refreshLevel0 = async () => {
+    if (!walletState.session) return;
+    await bootstrapLevel0(walletState.session, setLevel0State);
+  };
 
   const navigate = (nextView: View) => {
     setView(nextView);
@@ -108,12 +291,27 @@ function App() {
 
   return (
     <div className="app-wrap">
-      <Masthead view={view} theme={theme} onNavigate={navigate} onToggleTheme={setTheme} />
+      <Masthead
+        view={view}
+        theme={theme}
+        walletState={walletState}
+        onNavigate={navigate}
+        onToggleTheme={setTheme}
+        onConnect={connect}
+        onDisconnect={disconnect}
+      />
       {view === 'levels' && (
         <>
-          <CmdLine />
+          <CmdLine walletState={walletState} />
           {openLevel ? (
-            <LevelDetail level={openLevel} onBack={() => setOpenLevelId(null)} />
+            <LevelDetail
+              level={openLevel}
+              walletState={walletState}
+              level0State={level0State}
+              onBack={() => setOpenLevelId(null)}
+              onSolveLevel0={solveLevel0}
+              onRefreshLevel0={refreshLevel0}
+            />
           ) : (
             <LevelList onOpen={setOpenLevelId} />
           )}
@@ -138,20 +336,72 @@ function useTheme(): [Theme, (theme: Theme) => void] {
     window.localStorage.setItem('damlnaut-theme', theme);
   }, [theme]);
 
-  const setTheme = (nextTheme: Theme) => setThemeState(nextTheme);
-  return [theme, setTheme];
+  return [theme, setThemeState];
+}
+
+/**
+ * Compact wallet chip embedded in the masthead. Replaces the original
+ * three-column wallet-dock card entirely.
+ */
+function WalletChip({
+  walletState,
+  onConnect,
+  onDisconnect,
+}: {
+  walletState: WalletUiState;
+  onConnect: () => Promise<void>;
+  onDisconnect: () => void;
+}) {
+  const { phase, session } = walletState;
+  const party = session?.connection.party;
+  const partyShort = party ? shortenParty(party) : null;
+
+  if (phase !== 'connected' || !session) {
+    return (
+      <button
+        className={`wallet-chip ${phase}`}
+        onClick={() => void onConnect()}
+        disabled={phase === 'connecting'}
+        title={phase === 'error' ? walletState.message : undefined}
+      >
+        <span className={`wallet-dot ${phase}`} />
+        {phase === 'connecting' ? 'connecting…' : phase === 'error' ? 'wallet · error' : 'connect canton wallet'}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="wallet-chip connected"
+      title={`${party ?? ''}\nlocal session wallet — party persisted in this browser only`}
+    >
+      <span className="wallet-dot connected" />
+      <span className="wallet-chip-net">{session.connection.networkId}</span>
+      <span className="wallet-chip-sep">·</span>
+      <span className="wallet-chip-party">{partyShort}</span>
+      <button className="wallet-chip-x" onClick={onDisconnect} aria-label="disconnect">
+        ×
+      </button>
+    </div>
+  );
 }
 
 function Masthead({
   view,
   theme,
+  walletState,
   onNavigate,
   onToggleTheme,
+  onConnect,
+  onDisconnect,
 }: {
   view: View;
   theme: Theme;
+  walletState: WalletUiState;
   onNavigate: (view: View) => void;
   onToggleTheme: (theme: Theme) => void;
+  onConnect: () => Promise<void>;
+  onDisconnect: () => void;
 }) {
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
 
@@ -176,21 +426,22 @@ function Masthead({
         <button className="theme-toggle" onClick={() => onToggleTheme(nextTheme)}>
           [{nextTheme}]
         </button>
+        <WalletChip walletState={walletState} onConnect={onConnect} onDisconnect={onDisconnect} />
       </nav>
     </header>
   );
 }
 
-function CmdLine() {
+function CmdLine({ walletState }: { walletState: WalletUiState }) {
   const live = LEVELS.filter((level) => level.status === 'live').length;
   const locked = LEVELS.filter((level) => level.status === 'locked').length;
 
   return (
     <section className="cmdline" aria-label="Level status">
-      <div>$ ./levels --list</div>
+      <div>$ ./levels --list --provider canton</div>
       <div className="out">
-        {LEVELS.length} templates found &middot; <b>{live}</b> live &middot; <b>{locked}</b>{' '}
-        locked &middot; issuer: Damlnaut.FlagIssuer
+        {LEVELS.length} templates found · <b>{live}</b> live · <b>{locked}</b> locked · wallet:{' '}
+        <b>{walletState.phase}</b>
       </div>
     </section>
   );
@@ -234,27 +485,33 @@ function MicroFlow({ on }: { on: number }) {
   );
 }
 
-function LevelDetail({ level, onBack }: { level: Level; onBack: () => void }) {
+function LevelDetail({
+  level,
+  walletState,
+  level0State,
+  onBack,
+  onSolveLevel0,
+  onRefreshLevel0,
+}: {
+  level: Level;
+  walletState: WalletUiState;
+  level0State: Level0UiState;
+  onBack: () => void;
+  onSolveLevel0: () => Promise<void>;
+  onRefreshLevel0: () => Promise<void>;
+}) {
   const [activeFileId, setActiveFileId] = useState(level.files[0]?.id ?? '');
-  const [flagInput, setFlagInput] = useState('');
-  const [result, setResult] = useState<'correct' | 'incorrect' | null>(null);
-
   const activeFile = level.files.find((file) => file.id === activeFileId) ?? level.files[0];
-
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setResult(flagInput.trim() === level.flag ? 'correct' : 'incorrect');
-  };
 
   return (
     <section className="detail">
       <button className="back-link" onClick={onBack}>
-        &larr; levels
+        ← levels
       </button>
       <div className="detail-head">
         <div>
           <div className="detail-title">
-            {level.index} &mdash; {level.title}
+            {level.index} - {level.title}
           </div>
           <p className="detail-summary">{level.summary}</p>
         </div>
@@ -278,6 +535,14 @@ function LevelDetail({ level, onBack }: { level: Level; onBack: () => void }) {
               <li key={step}>{step}</li>
             ))}
           </ol>
+          {level.id === 'level-0' && (
+            <Level0ExecutionCard
+              walletState={walletState}
+              level0State={level0State}
+              onSolveLevel0={onSolveLevel0}
+              onRefreshLevel0={onRefreshLevel0}
+            />
+          )}
         </div>
 
         <div className="code-panel">
@@ -298,28 +563,83 @@ function LevelDetail({ level, onBack }: { level: Level; onBack: () => void }) {
           <pre className="code-body">{activeFile?.body ?? '// no source attached'}</pre>
         </div>
       </div>
-
-      <form className="submit" onSubmit={handleSubmit}>
-        <div className="submit-label">&gt;</div>
-        <input
-          aria-label="Submit flag"
-          placeholder="submit flag{...}"
-          value={flagInput}
-          onChange={(event) => {
-            setFlagInput(event.target.value);
-            setResult(null);
-          }}
-          spellCheck={false}
-        />
-        <button type="submit">execute</button>
-      </form>
-      {result === 'correct' && (
-        <div className="submit-feedback correct">flag accepted &mdash; level 00 solved</div>
-      )}
-      {result === 'incorrect' && (
-        <div className="submit-feedback incorrect">not a match. re-run the local harness.</div>
-      )}
     </section>
+  );
+}
+
+function Level0ExecutionCard({
+  walletState,
+  level0State,
+  onSolveLevel0,
+  onRefreshLevel0,
+}: {
+  walletState: WalletUiState;
+  level0State: Level0UiState;
+  onSolveLevel0: () => Promise<void>;
+  onRefreshLevel0: () => Promise<void>;
+}) {
+  const connected = walletState.phase === 'connected' && walletState.session;
+  const instance = level0State.instance;
+  const busy = level0State.phase === 'bootstrapping' || level0State.phase === 'solving' || level0State.phase === 'verifying';
+
+  return (
+    <div className="flow-card">
+      <div className="flow-head">
+        <span>live dapp execution</span>
+        <strong>{level0State.phase}</strong>
+      </div>
+      <div className="flow-grid">
+        <div className="flow-item">
+          <span>party</span>
+          <strong>{walletState.session ? shortenParty(walletState.session.connection.party) : 'not connected'}</strong>
+        </div>
+        <div className="flow-item">
+          <span>instance</span>
+          <strong>{instance ? shortenCid(instance.contractId) : 'not bootstrapped'}</strong>
+        </div>
+        <div className="flow-item">
+          <span>proof</span>
+          <strong>{level0State.proofCid ? shortenCid(level0State.proofCid) : 'missing'}</strong>
+        </div>
+        <div className="flow-item wide">
+          <span>flag</span>
+          <strong>{level0State.flag?.payload.value ?? 'not verified yet'}</strong>
+        </div>
+      </div>
+
+      <div className="flow-note">
+        {level0State.error ??
+          level0State.verificationMessage ??
+          (connected
+            ? 'This view will call Ledger.create Level0Instance for the connected party.'
+            : 'Connect the wallet first. Level 0 only becomes live once a Canton party exists.')}
+      </div>
+
+      {level0State.txSummary && <div className="flow-tx">tx: {level0State.txSummary}</div>}
+
+      <div className="flow-actions">
+        <button
+          className="action-button secondary"
+          onClick={() => void onRefreshLevel0()}
+          disabled={!connected || busy}
+        >
+          refresh session
+        </button>
+        <button
+          className="action-button"
+          onClick={() => void onSolveLevel0()}
+          disabled={!connected || !instance || busy || level0State.phase === 'solved'}
+        >
+          {level0State.phase === 'solving'
+            ? 'signing…'
+            : level0State.phase === 'verifying'
+              ? 'verifying…'
+              : level0State.phase === 'solved'
+                ? 'level solved'
+                : 'approve and solve'}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -329,16 +649,16 @@ function ArchitectureView() {
       <div className="section-label">// architecture</div>
       <div className="log architecture-log">
         <p>
-          <span className="ln">--</span>Instance &rarr; Player Exploit/Submit Choice &rarr;
-          FlagProof &rarr; FlagIssuer.IssueFlag &rarr; Flag
+          <span className="ln">--</span>frontend dApp client → Daml SDK JSON Ledger API v2 → Canton
+          localnet participant → FlagProof → backend verifier (issuer) → Flag.
         </p>
         <p>
-          <span className="ln">--</span>every level follows this shape; proofs never carry the final
-          flag value directly.
+          <span className="ln">--</span>the frontend never touches the backend for ledger reads or
+          writes as the player; it talks straight to canton on 7575 via the Daml SDK client.
         </p>
         <p>
-          <span className="ln">--</span>the current demo validates client-side, but the issuer role can
-          later move behind a hosted backend.
+          <span className="ln">--</span>the backend only owns the issuer party: it bootstraps the
+          FlagIssuer contract and exercises IssueFlag once a valid FlagProof exists on the ledger.
         </p>
       </div>
     </section>
@@ -351,16 +671,19 @@ function AboutView() {
       <div className="section-label">// about</div>
       <div className="log">
         <p>
-          <span className="ln">--</span>Damlnaut is a local-first Daml/Canton CTF for learning ledger
-          security through small, auditable levels.
+          <span className="ln">--</span>Damlnaut is a Canton-native dApp playground for app
+          developers first and auditors second.
         </p>
         <p>
-          <span className="ln">--</span>the initial audience is Amar Singh / OpenZeppelin-style review,
-          so the site should communicate architecture clearly before it becomes a public platform.
+          <span className="ln">--</span>this slice runs entirely on a canton localnet — no super
+          validators required. connect a wallet, bootstrap a Level0Instance, sign SubmitLevel0, and
+          let the issuer mint the final flag.
         </p>
         <p>
-          <span className="ln">--</span>no hosted participant, login, wallet, or backend anti-cheat exists
-          yet.
+          <span className="ln">--</span>the "wallet" here is a local session wallet: the party is
+          allocated by the backend and persisted in browser localStorage. same laptop, same
+          browser, same party across refreshes. it is not external signing — no keypair on your
+          side. that's a later upgrade.
         </p>
       </div>
     </section>
@@ -370,10 +693,104 @@ function AboutView() {
 function Footer() {
   return (
     <footer>
-      <div>main @ local</div>
-      <div>local demo — client-side check</div>
+      <div>CTF-dapp @ canton localnet</div>
+      <div>daml sdk json ledger api v2</div>
     </footer>
   );
+}
+
+async function bootstrapLevel0(
+  session: WalletSession,
+  setLevel0State: React.Dispatch<React.SetStateAction<Level0UiState>>,
+) {
+  setLevel0State((current) => ({
+    ...current,
+    phase: 'bootstrapping',
+    error: null,
+    verificationMessage: 'looking up level 0 state on canton...',
+  }));
+
+  try {
+    // If the party already holds a Level 0 Flag from an earlier session,
+    // jump straight to the solved state instead of creating a new instance.
+    const existingFlag = await session.ledger.findFlag();
+    if (existingFlag) {
+      setLevel0State({
+        phase: 'solved',
+        instance: null,
+        proofCid: null,
+        flag: existingFlag,
+        txSummary: null,
+        verificationMessage: 'flag already minted for this party in an earlier run.',
+        error: null,
+      });
+      return;
+    }
+
+    const existing = await session.ledger.findLevel0Instance();
+    const instance =
+      existing ?? (await session.ledger.createLevel0Instance(instanceIdFor(session.connection.party)));
+    // A fresh bootstrap always starts a new proof/flag trail. Otherwise the
+    // UI would keep showing the previous solve's CIDs against a new instance.
+    setLevel0State({
+      phase: 'ready',
+      instance,
+      proofCid: null,
+      flag: null,
+      txSummary: null,
+      verificationMessage: existing
+        ? 'Level0Instance already active on canton for this party.'
+        : 'Level0Instance created on canton. Ready to solve.',
+      error: null,
+    });
+  } catch (error) {
+    setLevel0State({
+      phase: 'error',
+      instance: null,
+      proofCid: null,
+      flag: null,
+      txSummary: null,
+      verificationMessage: null,
+      error: errorMessage(error),
+    });
+  }
+}
+
+function instanceIdFor(party: string): string {
+  return `level-0-${party.split('::')[0] ?? party}`.toLowerCase().slice(0, 60);
+}
+
+function shortenParty(party: string): string {
+  const [name, ns] = party.split('::');
+  if (!ns) return party;
+  const nsTail = ns.length > 6 ? `${ns.slice(0, 4)}…${ns.slice(-2)}` : ns;
+  return `${name}::${nsTail}`;
+}
+
+function shortenCid(cid: string): string {
+  if (cid.length <= 14) return cid;
+  return `${cid.slice(0, 8)}…${cid.slice(-4)}`;
+}
+
+function getApiBase() {
+  return import.meta.env.VITE_DAMLNAUT_API_BASE ?? `http://${window.location.hostname}:8787`;
+}
+
+async function postJson<T>(input: string, body: unknown): Promise<T> {
+  const response = await fetch(input, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error ?? 'Damlnaut backend error.');
+  }
+  return payload as T;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error.';
 }
 
 createRoot(document.getElementById('root')!).render(

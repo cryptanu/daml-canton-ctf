@@ -4,17 +4,31 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "concurrently -k -n backend,frontend \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "tsx watch server/index.ts",
+    "dev:frontend": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "start:backend": "tsx server/index.ts",
+    "typecheck": "tsc --noEmit",
     "ctf:test": "./scripts/check.sh"
   },
   "dependencies": {
+    "@daml/types": "^2.10.0",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "concurrently": "^10.0.3",
+    "tsx": "^4.23.0"
+  }
 }

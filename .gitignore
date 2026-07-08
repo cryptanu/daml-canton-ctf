@@ -5,3 +5,11 @@
 node_modules/
 dist/
 .DS_Store
+
+# Canton sandbox runtime logs
+log/
+canton*.log
+
+# Editor / agent scratch
+CLAUDE.md
+.claude/

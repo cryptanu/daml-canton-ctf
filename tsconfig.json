@@ -15,8 +15,9 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "ignoreDeprecations": "6.0"
   },
-  "include": ["src"],
+  "include": ["src", "shared", "server"],
   "references": []
 }
