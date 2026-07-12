@@ -2,6 +2,9 @@
 
 This note documents the changes currently carried on branch `feat/local-session-wallet`.
 
+Live deployment for this branch:
+[https://daml-canton-ctf.vercel.app/](https://daml-canton-ctf.vercel.app/)
+
 ## Goal
 
 Turn Damlnaut from a local-only code-and-script challenge into a browser-driven Canton dApp demo:
@@ -169,6 +172,10 @@ Validated production behavior with:
 ## Operational notes
 
 Current hosted demo still depends on a reachable Canton JSON API endpoint.
+
+Current public URL:
+
+- `https://daml-canton-ctf.vercel.app/`
 
 For the present setup:
 

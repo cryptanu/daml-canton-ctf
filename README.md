@@ -2,6 +2,8 @@
 
 A beginner-friendly Daml/Canton security CTF inspired by Ethernaut-style levels.
 
+Live demo: [https://daml-canton-ctf.vercel.app/](https://daml-canton-ctf.vercel.app/)
+
 Implementation notes for the current browser-driven session-wallet branch live at
 [`docs/local-session-wallet-changes.md`](docs/local-session-wallet-changes.md).
 
@@ -128,8 +130,8 @@ vercel env add DAML_JSON_API_URL   # paste the ngrok URL
 vercel --prod                 # publish
 ```
 
-The DSS demo URL is whatever Vercel prints — usually
-`https://<project>.vercel.app`.
+Current production URL:
+`https://daml-canton-ctf.vercel.app/`
 
 ## Daml regression script
 
