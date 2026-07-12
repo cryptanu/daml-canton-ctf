@@ -16,18 +16,47 @@ export const DAMLNAUT_PROVIDER_NAME = 'Canton Localnet (Daml SDK)';
 
 // Module + entity names — matched against the Daml sources under daml/Damlnaut/.
 export const MOD_LEVEL0 = 'Damlnaut.Level0';
+export const MOD_LEVEL1 = 'Damlnaut.Level1';
 export const MOD_FLAG_ISSUER = 'Damlnaut.FlagIssuer';
 export const ENT_LEVEL0_INSTANCE = 'Level0Instance';
+export const ENT_MARKET = 'Market';
+export const ENT_POSITION = 'Position';
 export const ENT_FLAG_ISSUER = 'FlagIssuer';
 export const ENT_FLAG_PROOF = 'FlagProof';
 export const ENT_FLAG = 'Flag';
 
 export const CHOICE_SUBMIT_LEVEL0 = 'SubmitLevel0';
+export const CHOICE_SETTLE = 'Settle';
 export const CHOICE_ISSUE_FLAG = 'IssueFlag';
 
-export const LEVEL0_EXPECTED_PROOF = 'level-0-submitted';
+// -------- Level 0: bare proof --------
 export const LEVEL0_LEVEL_TAG = 'level-0';
+export const LEVEL0_EXPECTED_PROOF = 'level-0-submitted';
 export const LEVEL0_FLAG_VALUE = 'flag{daml_localnet_lvl0_ok}';
+
+// -------- Level 1: market rebinding --------
+export const LEVEL1_LEVEL_TAG = 'level-1';
+export const LEVEL1_EXPECTED_PROOF = 'market-rebind:BETA';
+export const LEVEL1_FLAG_VALUE = 'flag{market_rebound}';
+export const LEVEL1_MARKET_ALPHA_SYMBOL = 'ALPHA';
+export const LEVEL1_MARKET_ALPHA_PRICE = '1.0';
+export const LEVEL1_MARKET_BETA_SYMBOL = 'BETA';
+export const LEVEL1_MARKET_BETA_PRICE = '100.0';
+export const LEVEL1_POSITION_SIZE = '1.0';
+
+// Canonical list of levels whose FlagIssuer contract the backend seeds
+// on boot. Adding a level is: append here, add a Level<N>.daml file,
+// add /api/levels/N/* endpoints.
+export type LevelIssuerConfig = {
+  level: string;
+  expectedProof: string;
+  flagValue: string;
+};
+
+export const LEVEL_ISSUER_CONFIGS: readonly LevelIssuerConfig[] = [
+  { level: LEVEL0_LEVEL_TAG, expectedProof: LEVEL0_EXPECTED_PROOF, flagValue: LEVEL0_FLAG_VALUE },
+  { level: LEVEL1_LEVEL_TAG, expectedProof: LEVEL1_EXPECTED_PROOF, flagValue: LEVEL1_FLAG_VALUE },
+];
 
 // Template-id builder. Daml 3.4's JSON Ledger API accepts package-name
 // references of the form `#<packageName>:<Module>:<Entity>`.
@@ -67,10 +96,37 @@ export type FlagPayload = {
   value: string;
 };
 
+export type MarketPayload = {
+  curator: string;
+  player: string;
+  symbol: string;
+  price: string; // Daml Decimal is JSON-encoded as string
+};
+
+export type PositionPayload = {
+  player: string;
+  curator: string;
+  market: string; // ContractId of Market
+  size: string;
+  instanceId: string;
+};
+
 export type Level0InstanceRecord = {
   contractId: string;
   templateId: string;
   payload: Level0InstancePayload;
+};
+
+export type MarketRecord = {
+  contractId: string;
+  templateId: string;
+  payload: MarketPayload;
+};
+
+export type PositionRecord = {
+  contractId: string;
+  templateId: string;
+  payload: PositionPayload;
 };
 
 export type FlagProofRecord = {
@@ -109,6 +165,22 @@ export type VerifyLevel0Request = {
 };
 
 export type VerifyLevel0Response = {
+  proof: FlagProofRecord | null;
+  flag: FlagRecord | null;
+  verified: boolean;
+  message: string;
+};
+
+// -------- Level 1 API shapes --------
+
+export type BootstrapLevel1Request = { party: string };
+export type BootstrapLevel1Response = {
+  markets: MarketRecord[];
+  position: PositionRecord | null;
+};
+
+export type VerifyLevel1Request = { party: string };
+export type VerifyLevel1Response = {
   proof: FlagProofRecord | null;
   flag: FlagRecord | null;
   verified: boolean;

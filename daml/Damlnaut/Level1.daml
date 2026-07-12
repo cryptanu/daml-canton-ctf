@@ -1,0 +1,51 @@
+module Damlnaut.Level1 where
+
+import Damlnaut.FlagIssuer
+
+-- Level 1 — Market Rebinding.
+--
+-- A Position is opened against one Market at creation time. The Settle
+-- choice below is intentionally vulnerable: it fetches whatever Market
+-- contract-id the caller supplies, without asserting it matches the
+-- Market the Position was actually opened against. The player exploits
+-- this by settling their Position against a different Market's price.
+--
+-- The auditable fix is a single line:
+--     assertMsg "WRONG_MARKET" (marketCid == market)
+-- inside Settle. Do not add it here — the level is intentionally broken.
+
+template Market
+  with
+    curator : Party
+    player  : Party
+    symbol  : Text
+    price   : Decimal
+  where
+    signatory curator
+    observer player
+
+template Position
+  with
+    player     : Party
+    curator    : Party
+    market     : ContractId Market
+    size       : Decimal
+    instanceId : Text
+  where
+    signatory player
+    observer curator
+
+    -- Vulnerable: no `assertMsg "WRONG_MARKET" (marketCid == market)`.
+    -- Any Market the player can see can be rebound onto this Position.
+    choice Settle : ContractId FlagProof
+      with
+        marketCid : ContractId Market
+      controller player
+      do
+        m <- fetch marketCid
+        create FlagProof with
+          solver     = player
+          issuer     = curator
+          level      = "level-1"
+          instanceId = instanceId
+          proof      = "market-rebind:" <> m.symbol

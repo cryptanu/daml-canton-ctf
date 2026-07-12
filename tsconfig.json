@@ -18,6 +18,6 @@
     "types": ["vite/client"],
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src", "shared", "server"],
+  "include": ["src", "shared", "server", "api"],
   "references": []
 }

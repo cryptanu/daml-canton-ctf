@@ -4,20 +4,30 @@
 
 import { JsonApiClient, type CreatedEvent } from '../../shared/jsonLedgerApi';
 import {
+  CHOICE_SETTLE,
   CHOICE_SUBMIT_LEVEL0,
   DAMLNAUT_USER_ID,
   ENT_FLAG,
   ENT_FLAG_PROOF,
   ENT_LEVEL0_INSTANCE,
+  ENT_MARKET,
+  ENT_POSITION,
   LEVEL0_LEVEL_TAG,
+  LEVEL1_LEVEL_TAG,
+  LEVEL1_POSITION_SIZE,
   MOD_FLAG_ISSUER,
   MOD_LEVEL0,
+  MOD_LEVEL1,
   templateId,
   type FlagPayload,
   type FlagProofRecord,
   type FlagRecord,
   type Level0InstancePayload,
   type Level0InstanceRecord,
+  type MarketPayload,
+  type MarketRecord,
+  type PositionPayload,
+  type PositionRecord,
   type WalletConnectResponse,
 } from '../../shared/damlnaut';
 import { matchesTemplateIdBrowser } from './templateMatch';
@@ -113,16 +123,107 @@ export class DamlnautLedger {
     return this.connection.issuer;
   }
 
-  async findFlag(): Promise<FlagRecord | null> {
+  async findFlag(level: string = LEVEL0_LEVEL_TAG): Promise<FlagRecord | null> {
     const events = await this.api.activeContractsFor(this.party);
     const tid = templateId(MOD_FLAG_ISSUER, ENT_FLAG);
     const found = events.find(
       (event) =>
         matchesTemplateIdBrowser(event.templateId, tid) &&
         (event.createArgument.solver as string) === this.party &&
-        (event.createArgument.level as string) === LEVEL0_LEVEL_TAG,
+        (event.createArgument.level as string) === level,
     );
     return found ? recordFromEvent<FlagPayload>(found) : null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Level 1 — market rebinding
+  // ---------------------------------------------------------------------------
+
+  async findLevel1Markets(): Promise<MarketRecord[]> {
+    const events = await this.api.activeContractsFor(this.party);
+    const tid = templateId(MOD_LEVEL1, ENT_MARKET);
+    return events
+      .filter(
+        (event) =>
+          matchesTemplateIdBrowser(event.templateId, tid) &&
+          (event.createArgument.player as string) === this.party,
+      )
+      .map((event) => recordFromEvent<MarketPayload>(event));
+  }
+
+  async findLevel1Position(): Promise<PositionRecord | null> {
+    const events = await this.api.activeContractsFor(this.party);
+    const tid = templateId(MOD_LEVEL1, ENT_POSITION);
+    const found = events.find(
+      (event) =>
+        matchesTemplateIdBrowser(event.templateId, tid) &&
+        (event.createArgument.player as string) === this.party,
+    );
+    return found ? recordFromEvent<PositionPayload>(found) : null;
+  }
+
+  async createLevel1Position(marketCid: string, instanceId: string): Promise<PositionRecord> {
+    const payload: PositionPayload = {
+      player: this.party,
+      curator: this.issuer,
+      market: marketCid,
+      size: LEVEL1_POSITION_SIZE,
+      instanceId,
+    };
+    await this.api.submitAndWait({
+      userId: this.connection.userId || DAMLNAUT_USER_ID,
+      commandId: `l1-open-${instanceId}`,
+      actAs: [this.party],
+      commands: [
+        {
+          CreateCommand: {
+            templateId: templateId(MOD_LEVEL1, ENT_POSITION),
+            createArguments: payload as unknown as Record<string, unknown>,
+          },
+        },
+      ],
+    });
+    const created = await this.findLevel1Position();
+    if (!created) {
+      throw new Error('Position was created but not visible on refresh.');
+    }
+    return created;
+  }
+
+  async settleLevel1(
+    position: PositionRecord,
+    marketCid: string,
+  ): Promise<FlagProofRecord> {
+    const submit = await this.api.submitAndWait({
+      userId: this.connection.userId || DAMLNAUT_USER_ID,
+      commandId: `l1-settle-${position.payload.instanceId}`,
+      actAs: [this.party],
+      commands: [
+        {
+          ExerciseCommand: {
+            templateId: position.templateId,
+            contractId: position.contractId,
+            choice: CHOICE_SETTLE,
+            choiceArgument: { marketCid },
+          },
+        },
+      ],
+    });
+    const proofEvents = await this.api.activeContractsFor(this.party, {
+      atOffset: submit.completionOffset,
+    });
+    const proofTid = templateId(MOD_FLAG_ISSUER, ENT_FLAG_PROOF);
+    const proof = proofEvents.find(
+      (event) =>
+        matchesTemplateIdBrowser(event.templateId, proofTid) &&
+        (event.createArgument.solver as string) === this.party &&
+        (event.createArgument.level as string) === LEVEL1_LEVEL_TAG,
+    );
+    if (!proof) {
+      throw new Error('Settle executed but no Level 1 FlagProof is visible.');
+    }
+    const record = recordFromEvent<FlagProofRecord['payload']>(proof);
+    return { ...record, updateId: submit.updateId };
   }
 
   async findLevel0Instance(): Promise<Level0InstanceRecord | null> {

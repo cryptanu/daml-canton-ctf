@@ -2,10 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import flagIssuerSource from '../daml/Damlnaut/FlagIssuer.daml?raw';
 import level0Source from '../daml/Damlnaut/Level0.daml?raw';
+import level1Source from '../daml/Damlnaut/Level1.daml?raw';
 import {
+  LEVEL1_MARKET_ALPHA_SYMBOL,
+  LEVEL1_MARKET_BETA_SYMBOL,
+  type BootstrapLevel1Response,
   type FlagRecord,
   type Level0InstanceRecord,
+  type MarketRecord,
+  type PositionRecord,
   type VerifyLevel0Response,
+  type VerifyLevel1Response,
 } from '../shared/damlnaut';
 import {
   clearStoredWallet,
@@ -53,6 +60,18 @@ type Level0UiState = {
   error: string | null;
 };
 
+type Level1UiState = {
+  phase: 'idle' | 'bootstrapping' | 'ready' | 'solving' | 'verifying' | 'solved' | 'error';
+  markets: MarketRecord[];
+  position: PositionRecord | null;
+  selectedMarketCid: string | null;
+  proofCid: string | null;
+  flag: FlagRecord | null;
+  txSummary: string | null;
+  verificationMessage: string | null;
+  error: string | null;
+};
+
 const LEVELS: Level[] = [
   {
     id: 'level-0',
@@ -86,17 +105,31 @@ const LEVELS: Level[] = [
   {
     id: 'level-1',
     index: '01',
-    title: 'Contention on Canton',
-    desc: 'market rebinding, caller-supplied context',
-    status: 'locked',
-    stateLabel: 'locked',
-    microflowOn: 0,
+    title: 'Market Rebinding',
+    desc: 'settle a position against a market it was not opened against',
+    status: 'live',
+    stateLabel: 'live',
+    microflowOn: 3,
     summary:
-      'A position opened against one market later accepts a caller-supplied market context. Preserves the earlier Market Rebinding content under the new ledger-style name.',
-    objective: 'Exploit market context drift to mint a flag.',
-    files: [],
-    steps: [],
-    logLines: [],
+      'A Position is opened against Market Alpha. The Settle choice accepts a caller-supplied Market contract-id and never asserts it matches the market this Position was opened against. Rebind onto Beta to mint the flag.',
+    objective:
+      'Exercise Settle with the Beta market contract-id so the resulting FlagProof carries the Beta symbol and the issuer mints the flag.',
+    files: [
+      { id: 'level1', name: 'Level1.daml', body: level1Source },
+      { id: 'issuer', name: 'FlagIssuer.daml', body: flagIssuerSource },
+    ],
+    steps: [
+      'Open Level 1. The backend seeds Alpha (price 1.0) and Beta (price 100.0) as curator, observed by your party.',
+      'The frontend calls Ledger.create Position { market = Alpha } for you.',
+      'Pick Beta from the market picker and click "rebind and settle". The frontend calls Ledger.exercise Settle { marketCid = Beta } on your Position.',
+      'Verify. The backend, as issuer, exercises IssueFlag against the resulting FlagProof.',
+    ],
+    logLines: [
+      'the curator signs the markets and observes the position.',
+      'settle fetches whatever market the caller passes in.',
+      'the fix is one line: assert marketCid == market. it is intentionally absent.',
+      'the flagissuer expects the beta symbol carried through the proof.',
+    ],
   },
   {
     id: 'level-2',
@@ -131,13 +164,27 @@ const INITIAL_LEVEL0_STATE: Level0UiState = {
   error: null,
 };
 
+const INITIAL_LEVEL1_STATE: Level1UiState = {
+  phase: 'idle',
+  markets: [],
+  position: null,
+  selectedMarketCid: null,
+  proofCid: null,
+  flag: null,
+  txSummary: null,
+  verificationMessage: null,
+  error: null,
+};
+
 function App() {
   const [view, setView] = useState<View>('levels');
   const [openLevelId, setOpenLevelId] = useState<string | null>(null);
   const [theme, setTheme] = useTheme();
   const [walletState, setWalletState] = useState<WalletUiState>(INITIAL_WALLET_STATE);
   const [level0State, setLevel0State] = useState<Level0UiState>(INITIAL_LEVEL0_STATE);
+  const [level1State, setLevel1State] = useState<Level1UiState>(INITIAL_LEVEL1_STATE);
   const bootstrapRef = useRef<string | null>(null);
+  const bootstrap1Ref = useRef<string | null>(null);
   const resumeAttempted = useRef(false);
 
   const openLevel = LEVELS.find((level) => level.id === openLevelId) ?? null;
@@ -185,6 +232,28 @@ function App() {
     });
   }, [openLevelId, walletState.session, level0State.instance?.payload.player]);
 
+  useEffect(() => {
+    if (openLevelId !== 'level-1' || !walletState.session) {
+      return;
+    }
+    const party = walletState.session.connection.party;
+    if (level1State.position?.payload.player === party && level1State.markets.length > 0) {
+      return;
+    }
+    if (bootstrap1Ref.current === party) {
+      return;
+    }
+    bootstrap1Ref.current = party;
+    void bootstrapLevel1(walletState.session, setLevel1State).finally(() => {
+      bootstrap1Ref.current = null;
+    });
+  }, [
+    openLevelId,
+    walletState.session,
+    level1State.position?.payload.player,
+    level1State.markets.length,
+  ]);
+
   const connect = async () => {
     setWalletState({
       phase: 'connecting',
@@ -204,6 +273,7 @@ function App() {
         message: `${session.connection.networkId}`,
       });
       setLevel0State(INITIAL_LEVEL0_STATE);
+      setLevel1State(INITIAL_LEVEL1_STATE);
     } catch (error) {
       setWalletState({
         phase: 'error',
@@ -217,6 +287,7 @@ function App() {
     clearStoredWallet();
     setWalletState(INITIAL_WALLET_STATE);
     setLevel0State(INITIAL_LEVEL0_STATE);
+    setLevel1State(INITIAL_LEVEL1_STATE);
   };
 
   const solveLevel0 = async () => {
@@ -284,6 +355,58 @@ function App() {
     await bootstrapLevel0(walletState.session, setLevel0State);
   };
 
+  const selectLevel1Market = (marketCid: string) => {
+    setLevel1State((current) => ({ ...current, selectedMarketCid: marketCid }));
+  };
+
+  const solveLevel1 = async () => {
+    const session = walletState.session;
+    const position = level1State.position;
+    const marketCid = level1State.selectedMarketCid;
+    if (!session || !position || !marketCid) return;
+
+    setLevel1State((current) => ({
+      ...current,
+      phase: 'solving',
+      error: null,
+      verificationMessage: 'exercising Settle with the selected Market...',
+    }));
+
+    try {
+      const proof = await session.ledger.settleLevel1(position, marketCid);
+      setLevel1State((current) => ({
+        ...current,
+        phase: 'verifying',
+        position: null, // Settle consumed the Position.
+        proofCid: proof.contractId,
+        txSummary: proof.updateId ? `updateId ${proof.updateId}` : null,
+        verificationMessage: 'FlagProof created. Waiting for issuer to mint the flag...',
+      }));
+
+      const verify = await postJson<VerifyLevel1Response>(
+        `${getApiBase()}/api/levels/1/verify`,
+        { party: session.connection.party },
+      );
+      setLevel1State((current) => ({
+        ...current,
+        phase: verify.verified ? 'solved' : 'ready',
+        flag: verify.flag,
+        verificationMessage: verify.message,
+      }));
+    } catch (error) {
+      setLevel1State((current) => ({
+        ...current,
+        phase: 'error',
+        error: errorMessage(error),
+      }));
+    }
+  };
+
+  const refreshLevel1 = async () => {
+    if (!walletState.session) return;
+    await bootstrapLevel1(walletState.session, setLevel1State);
+  };
+
   const navigate = (nextView: View) => {
     setView(nextView);
     setOpenLevelId(null);
@@ -308,9 +431,13 @@ function App() {
               level={openLevel}
               walletState={walletState}
               level0State={level0State}
+              level1State={level1State}
               onBack={() => setOpenLevelId(null)}
               onSolveLevel0={solveLevel0}
               onRefreshLevel0={refreshLevel0}
+              onSelectLevel1Market={selectLevel1Market}
+              onSolveLevel1={solveLevel1}
+              onRefreshLevel1={refreshLevel1}
             />
           ) : (
             <LevelList onOpen={setOpenLevelId} />
@@ -489,16 +616,24 @@ function LevelDetail({
   level,
   walletState,
   level0State,
+  level1State,
   onBack,
   onSolveLevel0,
   onRefreshLevel0,
+  onSelectLevel1Market,
+  onSolveLevel1,
+  onRefreshLevel1,
 }: {
   level: Level;
   walletState: WalletUiState;
   level0State: Level0UiState;
+  level1State: Level1UiState;
   onBack: () => void;
   onSolveLevel0: () => Promise<void>;
   onRefreshLevel0: () => Promise<void>;
+  onSelectLevel1Market: (marketCid: string) => void;
+  onSolveLevel1: () => Promise<void>;
+  onRefreshLevel1: () => Promise<void>;
 }) {
   const [activeFileId, setActiveFileId] = useState(level.files[0]?.id ?? '');
   const activeFile = level.files.find((file) => file.id === activeFileId) ?? level.files[0];
@@ -541,6 +676,15 @@ function LevelDetail({
               level0State={level0State}
               onSolveLevel0={onSolveLevel0}
               onRefreshLevel0={onRefreshLevel0}
+            />
+          )}
+          {level.id === 'level-1' && (
+            <Level1ExecutionCard
+              walletState={walletState}
+              level1State={level1State}
+              onSelectMarket={onSelectLevel1Market}
+              onSolve={onSolveLevel1}
+              onRefresh={onRefreshLevel1}
             />
           )}
         </div>
@@ -637,6 +781,135 @@ function Level0ExecutionCard({
               : level0State.phase === 'solved'
                 ? 'level solved'
                 : 'approve and solve'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Level1ExecutionCard({
+  walletState,
+  level1State,
+  onSelectMarket,
+  onSolve,
+  onRefresh,
+}: {
+  walletState: WalletUiState;
+  level1State: Level1UiState;
+  onSelectMarket: (marketCid: string) => void;
+  onSolve: () => Promise<void>;
+  onRefresh: () => Promise<void>;
+}) {
+  const connected = walletState.phase === 'connected' && walletState.session;
+  const busy =
+    level1State.phase === 'bootstrapping' ||
+    level1State.phase === 'solving' ||
+    level1State.phase === 'verifying';
+  const { position, markets, selectedMarketCid } = level1State;
+  const marketBySymbol = (symbol: string) =>
+    markets.find((m) => m.payload.symbol === symbol) ?? null;
+  const alpha = marketBySymbol(LEVEL1_MARKET_ALPHA_SYMBOL);
+  const beta = marketBySymbol(LEVEL1_MARKET_BETA_SYMBOL);
+
+  return (
+    <div className="flow-card">
+      <div className="flow-head">
+        <span>live dapp execution</span>
+        <strong>{level1State.phase}</strong>
+      </div>
+
+      <div className="flow-grid">
+        <div className="flow-item">
+          <span>party</span>
+          <strong>
+            {walletState.session
+              ? shortenParty(walletState.session.connection.party)
+              : 'not connected'}
+          </strong>
+        </div>
+        <div className="flow-item">
+          <span>position</span>
+          <strong>{position ? shortenCid(position.contractId) : 'not opened'}</strong>
+        </div>
+        <div className="flow-item">
+          <span>proof</span>
+          <strong>{level1State.proofCid ? shortenCid(level1State.proofCid) : 'missing'}</strong>
+        </div>
+        <div className="flow-item wide">
+          <span>flag</span>
+          <strong>{level1State.flag?.payload.value ?? 'not verified yet'}</strong>
+        </div>
+      </div>
+
+      <div className="market-picker" role="radiogroup" aria-label="Market picker">
+        <div className="market-picker-head">select the market to settle against</div>
+        {markets.length === 0 && (
+          <div className="market-picker-empty">
+            {connected
+              ? 'markets will appear here once level 1 boots.'
+              : 'connect a wallet first to seed markets.'}
+          </div>
+        )}
+        {[alpha, beta]
+          .filter((m): m is MarketRecord => !!m)
+          .map((market) => {
+            const isPositionMarket = position?.payload.market === market.contractId;
+            const isSelected = selectedMarketCid === market.contractId;
+            return (
+              <button
+                key={market.contractId}
+                className={`market-option ${isSelected ? 'selected' : ''}`}
+                role="radio"
+                aria-checked={isSelected}
+                onClick={() => onSelectMarket(market.contractId)}
+                disabled={!position || busy || level1State.phase === 'solved'}
+              >
+                <span className="market-symbol">{market.payload.symbol}</span>
+                <span className="market-price">price {market.payload.price}</span>
+                <span className={`market-tag ${isPositionMarket ? 'opened' : 'exploit'}`}>
+                  {isPositionMarket ? 'position opened here' : 'rebind target'}
+                </span>
+              </button>
+            );
+          })}
+      </div>
+
+      <div className="flow-note">
+        {level1State.error ??
+          level1State.verificationMessage ??
+          (connected
+            ? 'this view will open a position against Alpha and let you exercise Settle against either market.'
+            : 'connect the wallet first. Level 1 only becomes live once a Canton party exists.')}
+      </div>
+
+      {level1State.txSummary && <div className="flow-tx">tx: {level1State.txSummary}</div>}
+
+      <div className="flow-actions">
+        <button
+          className="action-button secondary"
+          onClick={() => void onRefresh()}
+          disabled={!connected || busy}
+        >
+          refresh session
+        </button>
+        <button
+          className="action-button"
+          onClick={() => void onSolve()}
+          disabled={
+            !connected ||
+            !position ||
+            !selectedMarketCid ||
+            busy ||
+            level1State.phase === 'solved'
+          }
+        >
+          {level1State.phase === 'solving'
+            ? 'signing settle...'
+            : level1State.phase === 'verifying'
+              ? 'verifying...'
+              : level1State.phase === 'solved'
+                ? 'level solved'
+                : 'rebind and settle'}
         </button>
       </div>
     </div>
@@ -756,8 +1029,95 @@ async function bootstrapLevel0(
   }
 }
 
+async function bootstrapLevel1(
+  session: WalletSession,
+  setLevel1State: React.Dispatch<React.SetStateAction<Level1UiState>>,
+) {
+  setLevel1State((current) => ({
+    ...current,
+    phase: 'bootstrapping',
+    error: null,
+    verificationMessage: 'seeding markets and opening position...',
+  }));
+
+  try {
+    const existingFlag = await session.ledger.findFlag('level-1');
+    if (existingFlag) {
+      // Backend still owes us the market list for the UI; ask for it and
+      // then jump to solved.
+      const seeded = await postJson<BootstrapLevel1Response>(
+        `${getApiBase()}/api/levels/1/bootstrap`,
+        { party: session.connection.party },
+      );
+      setLevel1State({
+        phase: 'solved',
+        markets: seeded.markets,
+        position: seeded.position,
+        selectedMarketCid: null,
+        proofCid: null,
+        flag: existingFlag,
+        txSummary: null,
+        verificationMessage: 'flag already minted for this party in an earlier run.',
+        error: null,
+      });
+      return;
+    }
+
+    // Backend seeds Alpha and Beta as curator (idempotent).
+    const seeded = await postJson<BootstrapLevel1Response>(
+      `${getApiBase()}/api/levels/1/bootstrap`,
+      { party: session.connection.party },
+    );
+    const alpha =
+      seeded.markets.find((m) => m.payload.symbol === LEVEL1_MARKET_ALPHA_SYMBOL) ?? null;
+    if (!alpha) {
+      throw new Error('Backend did not return an Alpha market.');
+    }
+
+    // Position is signatory=player, so we must create it from the browser.
+    let position = seeded.position ?? (await session.ledger.findLevel1Position());
+    if (!position) {
+      position = await session.ledger.createLevel1Position(
+        alpha.contractId,
+        instanceIdForLevel1(session.connection.party),
+      );
+    }
+
+    setLevel1State({
+      phase: 'ready',
+      markets: seeded.markets,
+      position,
+      selectedMarketCid: null,
+      proofCid: null,
+      flag: null,
+      txSummary: null,
+      verificationMessage:
+        'position opened against ' +
+        (position.payload.market === alpha.contractId ? 'Alpha' : 'an alternate market') +
+        '. pick a market to settle against.',
+      error: null,
+    });
+  } catch (error) {
+    setLevel1State({
+      phase: 'error',
+      markets: [],
+      position: null,
+      selectedMarketCid: null,
+      proofCid: null,
+      flag: null,
+      txSummary: null,
+      verificationMessage: null,
+      error: errorMessage(error),
+    });
+  }
+}
+
 function instanceIdFor(party: string): string {
   return `level-0-${party.split('::')[0] ?? party}`.toLowerCase().slice(0, 60);
+}
+
+function instanceIdForLevel1(party: string): string {
+  return `level-1-${party.split('::')[0] ?? party}`.toLowerCase().slice(0, 60);
 }
 
 function shortenParty(party: string): string {
@@ -773,7 +1133,15 @@ function shortenCid(cid: string): string {
 }
 
 function getApiBase() {
-  return import.meta.env.VITE_DAMLNAUT_API_BASE ?? `http://${window.location.hostname}:8787`;
+  const configured = import.meta.env.VITE_DAMLNAUT_API_BASE?.trim();
+  if (configured) {
+    return configured.replace(/\/$/, '');
+  }
+  // Local Vite dev serves the frontend on 5173 while the backend runs on
+  // 8787. In production on Vercel, the API is same-origin under /api/*.
+  return import.meta.env.DEV
+    ? `http://${window.location.hostname}:8787`
+    : window.location.origin;
 }
 
 async function postJson<T>(input: string, body: unknown): Promise<T> {

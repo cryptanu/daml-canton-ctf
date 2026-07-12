@@ -13,3 +13,11 @@ canton*.log
 # Editor / agent scratch
 CLAUDE.md
 .claude/
+scratchpad.md
+
+# Vercel + env
+.vercel/
+.env
+.env.local
+.env.*.local
+.vercel

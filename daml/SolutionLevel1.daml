@@ -1,0 +1,59 @@
+module SolutionLevel1 where
+
+import Daml.Script
+import Damlnaut.FlagIssuer
+import Damlnaut.Level1
+
+-- Reference solve for Level 1 (Market Rebinding). Kept out of the web UI's
+-- displayed source tab; used only by scripts/check.sh and daml test.
+solveLevel1 : Script (ContractId Flag)
+solveLevel1 = script do
+  curator <- allocateParty "level1-curator"
+  player  <- allocateParty "level1-player"
+
+  -- Curator seeds the FlagIssuer for level-1 with the exploit-only proof.
+  issuerCid <- submit curator do
+    createCmd FlagIssuer with
+      issuer        = curator
+      level         = "level-1"
+      expectedProof = "market-rebind:BETA"
+      flagValue     = "flag{market_rebound}"
+
+  -- Two markets observed by the player.
+  alphaCid <- submit curator do
+    createCmd Market with
+      curator = curator
+      player  = player
+      symbol  = "ALPHA"
+      price   = 1.0
+
+  betaCid <- submit curator do
+    createCmd Market with
+      curator = curator
+      player  = player
+      symbol  = "BETA"
+      price   = 100.0
+
+  -- Player opens a Position against Alpha.
+  positionCid <- submit player do
+    createCmd Position with
+      player     = player
+      curator    = curator
+      market     = alphaCid
+      size       = 1.0
+      instanceId = "level-1-solution"
+
+  -- The rebind: settle the Alpha-opened position against Beta's price.
+  proofCid <- submit player do
+    exerciseCmd positionCid Settle with marketCid = betaCid
+
+  -- Curator (as issuer) mints the final flag from the proof.
+  flagCid <- submit curator do
+    exerciseCmd issuerCid IssueFlag with proofCid = proofCid
+
+  Some flag <- queryContractId player flagCid
+  assertMsg "FLAG_LEVEL_MISMATCH"    (flag.level    == "level-1")
+  assertMsg "FLAG_INSTANCE_MISMATCH" (flag.instanceId == "level-1-solution")
+  assertMsg "FLAG_VALUE_MISMATCH"    (flag.value    == "flag{market_rebound}")
+
+  pure flagCid

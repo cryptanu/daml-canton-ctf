@@ -2,6 +2,9 @@
 
 A beginner-friendly Daml/Canton security CTF inspired by Ethernaut-style levels.
 
+Implementation notes for the current browser-driven session-wallet branch live at
+[`docs/local-session-wallet-changes.md`](docs/local-session-wallet-changes.md).
+
 Branch `CTF-dapp` runs the entire Level 0 loop on a **canton localnet** using the
 Daml SDK JSON Ledger API v2 (Daml 3.4). No super validator, no external wallet,
 no testnet. Everything lives on your machine.
@@ -95,6 +98,38 @@ DAML_JSON_API_URL=http://localhost:7575 npm run dev
 If it stalls: `curl http://localhost:8787/api/health` reports whether the
 backend has bootstrapped the issuer. `bootError` there points at whatever
 went wrong on 7575.
+
+## Vercel deploy (frontend + backend as functions)
+
+The `api/` folder holds a Vercel entrypoint that re-exports the same
+Express app used locally. The frontend static bundle from `npm run build`
+is served from `dist/`.
+
+Canton itself is not deployed to Vercel — Vercel functions can't host a
+long-running Canton participant. During pre-launch you tunnel to a local
+Canton with ngrok (or cloudflared, tailscale funnel); once the docker /
+VPS story from the scratchpad lands, you point `DAML_JSON_API_URL` at
+the hosted participant instead.
+
+Deploy:
+
+```sh
+# 1. Local: keep the sandbox running.
+./damlw build
+canton sandbox --json-api-port 7575 --dar .daml/dist/daml-canton-ctf-0.1.0.dar
+
+# 2. New terminal: tunnel Canton to a public HTTPS URL.
+ngrok http 7575
+# copy the https URL, e.g. https://abc123.ngrok-free.app
+
+# 3. Deploy.
+vercel                        # first push, sets up the project
+vercel env add DAML_JSON_API_URL   # paste the ngrok URL
+vercel --prod                 # publish
+```
+
+The DSS demo URL is whatever Vercel prints — usually
+`https://<project>.vercel.app`.
 
 ## Daml regression script
 
