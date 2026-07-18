@@ -14,13 +14,12 @@ import {
   type VerifyLevel1Response,
 } from '../shared/damlnaut';
 import {
-  clearStoredWallet,
-  connectWallet,
-  loadStoredWallet,
-  resumeWallet,
-  saveStoredWallet,
-  type WalletSession,
-} from './canton/damlLedger';
+  connectLiveWallet,
+  disconnectLiveWallet,
+  initLiveWallet,
+  tryResumeLiveWallet,
+  type LiveWalletSession,
+} from './canton/liveWallet';
 import './styles.css';
 
 type View = 'levels' | 'architecture' | 'about';
@@ -45,7 +44,7 @@ type Level = {
 
 type WalletUiState = {
   phase: 'idle' | 'connecting' | 'connected' | 'error';
-  session: WalletSession | null;
+  session: LiveWalletSession | null;
   message: string;
 };
 
@@ -183,43 +182,58 @@ function App() {
   const [walletState, setWalletState] = useState<WalletUiState>(INITIAL_WALLET_STATE);
   const [level0State, setLevel0State] = useState<Level0UiState>(INITIAL_LEVEL0_STATE);
   const [level1State, setLevel1State] = useState<Level1UiState>(INITIAL_LEVEL1_STATE);
+  const [issuerParty, setIssuerParty] = useState<string | null>(null);
   const bootstrapRef = useRef<string | null>(null);
   const bootstrap1Ref = useRef<string | null>(null);
   const resumeAttempted = useRef(false);
 
   const openLevel = LEVELS.find((level) => level.id === openLevelId) ?? null;
 
-  // Auto-resume from localStorage on first mount. If Canton has since been
-  // reset (party no longer exists), silently drop to idle.
+  // On first mount: init the wallet-SDK, fetch the backend's issuer party
+  // (needed to construct Level 0/1 payloads), and attempt a silent resume
+  // of any persisted wallet session the SDK still holds.
   useEffect(() => {
     if (resumeAttempted.current) return;
     resumeAttempted.current = true;
-    const stored = loadStoredWallet();
-    if (!stored) return;
-    setWalletState({
-      phase: 'connecting',
-      session: null,
-      message: 'resuming canton session...',
-    });
-    void resumeWallet(getApiBase(), stored.party)
-      .then((session) => {
+    (async () => {
+      try {
+        await initLiveWallet();
+      } catch (error) {
+        console.warn('[damlnaut] wallet-sdk init failed', error);
+      }
+      let issuer: string | null = null;
+      try {
+        const health = await fetch(`${getApiBase()}/api/health`).then((r) => r.json());
+        issuer = typeof health?.issuer === 'string' ? health.issuer : null;
+        setIssuerParty(issuer);
+      } catch (error) {
+        console.warn('[damlnaut] health fetch failed', error);
+        return;
+      }
+      if (!issuer) return;
+      setWalletState({
+        phase: 'connecting',
+        session: null,
+        message: 'resuming canton wallet session...',
+      });
+      const resumed = await tryResumeLiveWallet(issuer);
+      if (resumed) {
         setWalletState({
           phase: 'connected',
-          session,
-          message: session.connection.networkId,
+          session: resumed,
+          message: resumed.snapshot.networkId,
         });
-      })
-      .catch(() => {
-        clearStoredWallet();
+      } else {
         setWalletState(INITIAL_WALLET_STATE);
-      });
+      }
+    })();
   }, []);
 
   useEffect(() => {
     if (openLevelId !== 'level-0' || !walletState.session) {
       return;
     }
-    const party = walletState.session.connection.party;
+    const party = walletState.session.snapshot.party;
     if (level0State.instance?.payload.player === party) {
       return;
     }
@@ -236,7 +250,7 @@ function App() {
     if (openLevelId !== 'level-1' || !walletState.session) {
       return;
     }
-    const party = walletState.session.connection.party;
+    const party = walletState.session.snapshot.party;
     if (level1State.position?.payload.player === party && level1State.markets.length > 0) {
       return;
     }
@@ -258,19 +272,24 @@ function App() {
     setWalletState({
       phase: 'connecting',
       session: null,
-      message: 'allocating party on canton localnet...',
+      message: 'opening canton wallet picker...',
     });
     try {
-      const session = await connectWallet(getApiBase());
-      saveStoredWallet({
-        party: session.connection.party,
-        networkId: session.connection.networkId,
-        savedAt: Date.now(),
-      });
+      // Grab issuer lazily if the mount-time fetch hasn't finished yet.
+      let issuer = issuerParty;
+      if (!issuer) {
+        const health = await fetch(`${getApiBase()}/api/health`).then((r) => r.json());
+        issuer = typeof health?.issuer === 'string' ? health.issuer : null;
+        setIssuerParty(issuer);
+      }
+      if (!issuer) {
+        throw new Error('Damlnaut backend has no issuer party yet. Is Canton reachable?');
+      }
+      const session = await connectLiveWallet(issuer);
       setWalletState({
         phase: 'connected',
         session,
-        message: `${session.connection.networkId}`,
+        message: `${session.snapshot.networkId}`,
       });
       setLevel0State(INITIAL_LEVEL0_STATE);
       setLevel1State(INITIAL_LEVEL1_STATE);
@@ -283,8 +302,8 @@ function App() {
     }
   };
 
-  const disconnect = () => {
-    clearStoredWallet();
+  const disconnect = async () => {
+    await disconnectLiveWallet();
     setWalletState(INITIAL_WALLET_STATE);
     setLevel0State(INITIAL_LEVEL0_STATE);
     setLevel1State(INITIAL_LEVEL1_STATE);
@@ -311,7 +330,7 @@ function App() {
       if (!active || active.contractId !== cachedInstance.contractId) {
         instance =
           active ??
-          (await session.ledger.createLevel0Instance(instanceIdFor(session.connection.party)));
+          (await session.ledger.createLevel0Instance(instanceIdFor(session.snapshot.party)));
         setLevel0State((current) => ({
           ...current,
           instance,
@@ -332,7 +351,7 @@ function App() {
 
       const verify = await postJson<VerifyLevel0Response>(
         `${getApiBase()}/api/levels/0/verify`,
-        { party: session.connection.party },
+        { party: session.snapshot.party },
       );
 
       setLevel0State((current) => ({
@@ -390,7 +409,7 @@ function App() {
 
       const verify = await postJson<VerifyLevel1Response>(
         `${getApiBase()}/api/levels/1/verify`,
-        { party: session.connection.party },
+        { party: session.snapshot.party },
       );
       setLevel1State((current) => ({
         ...current,
@@ -482,10 +501,10 @@ function WalletChip({
 }: {
   walletState: WalletUiState;
   onConnect: () => Promise<void>;
-  onDisconnect: () => void;
+  onDisconnect: () => Promise<void>;
 }) {
   const { phase, session } = walletState;
-  const party = session?.connection.party;
+  const party = session?.snapshot.party;
   const partyShort = party ? shortenParty(party) : null;
 
   if (phase !== 'connected' || !session) {
@@ -505,13 +524,17 @@ function WalletChip({
   return (
     <div
       className="wallet-chip connected"
-      title={`${party ?? ''}\nlocal session wallet — party persisted in this browser only`}
+      title={`${party ?? ''}\nlive canton wallet (${session.snapshot.providerName})`}
     >
       <span className="wallet-dot connected" />
-      <span className="wallet-chip-net">{session.connection.networkId}</span>
+      <span className="wallet-chip-net">{session.snapshot.networkId}</span>
       <span className="wallet-chip-sep">·</span>
       <span className="wallet-chip-party">{partyShort}</span>
-      <button className="wallet-chip-x" onClick={onDisconnect} aria-label="disconnect">
+      <button
+        className="wallet-chip-x"
+        onClick={() => void onDisconnect()}
+        aria-label="disconnect"
+      >
         ×
       </button>
     </div>
@@ -533,7 +556,7 @@ function Masthead({
   onNavigate: (view: View) => void;
   onToggleTheme: (theme: Theme) => void;
   onConnect: () => Promise<void>;
-  onDisconnect: () => void;
+  onDisconnect: () => Promise<void>;
 }) {
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
 
@@ -740,7 +763,7 @@ function Level0ExecutionCard({
       <div className="flow-grid">
         <div className="flow-item">
           <span>party</span>
-          <strong>{walletState.session ? shortenParty(walletState.session.connection.party) : 'not connected'}</strong>
+          <strong>{walletState.session ? shortenParty(walletState.session.snapshot.party) : 'not connected'}</strong>
         </div>
         <div className="flow-item">
           <span>instance</span>
@@ -825,7 +848,7 @@ function Level1ExecutionCard({
           <span>party</span>
           <strong>
             {walletState.session
-              ? shortenParty(walletState.session.connection.party)
+              ? shortenParty(walletState.session.snapshot.party)
               : 'not connected'}
           </strong>
         </div>
@@ -959,10 +982,9 @@ function AboutView() {
           let the issuer mint the final flag.
         </p>
         <p>
-          <span className="ln">--</span>the "wallet" here is a local session wallet: the party is
-          allocated by the backend and persisted in browser localStorage. same laptop, same
-          browser, same party across refreshes. it is not external signing — no keypair on your
-          side. that's a later upgrade.
+          <span className="ln">--</span>the connect flow is CIP-103. any browser wallet that
+          implements @canton-network/dapp-sdk is picked up automatically. the wallet owns the
+          keypair and party; damlnaut only holds the issuer party and mints flags server-side.
         </p>
       </div>
     </section>
@@ -979,7 +1001,7 @@ function Footer() {
 }
 
 async function bootstrapLevel0(
-  session: WalletSession,
+  session: LiveWalletSession,
   setLevel0State: React.Dispatch<React.SetStateAction<Level0UiState>>,
 ) {
   setLevel0State((current) => ({
@@ -1008,7 +1030,7 @@ async function bootstrapLevel0(
 
     const existing = await session.ledger.findLevel0Instance();
     const instance =
-      existing ?? (await session.ledger.createLevel0Instance(instanceIdFor(session.connection.party)));
+      existing ?? (await session.ledger.createLevel0Instance(instanceIdFor(session.snapshot.party)));
     // A fresh bootstrap always starts a new proof/flag trail. Otherwise the
     // UI would keep showing the previous solve's CIDs against a new instance.
     setLevel0State({
@@ -1036,7 +1058,7 @@ async function bootstrapLevel0(
 }
 
 async function bootstrapLevel1(
-  session: WalletSession,
+  session: LiveWalletSession,
   setLevel1State: React.Dispatch<React.SetStateAction<Level1UiState>>,
 ) {
   setLevel1State((current) => ({
@@ -1053,7 +1075,7 @@ async function bootstrapLevel1(
       // then jump to solved.
       const seeded = await postJson<BootstrapLevel1Response>(
         `${getApiBase()}/api/levels/1/bootstrap`,
-        { party: session.connection.party },
+        { party: session.snapshot.party },
       );
       setLevel1State({
         phase: 'solved',
@@ -1072,7 +1094,7 @@ async function bootstrapLevel1(
     // Backend seeds the level's market set as curator (idempotent).
     const seeded = await postJson<BootstrapLevel1Response>(
       `${getApiBase()}/api/levels/1/bootstrap`,
-      { party: session.connection.party },
+      { party: session.snapshot.party },
     );
     const openedMarket =
       seeded.markets.find((m) => m.payload.symbol === LEVEL1_OPEN_MARKET_SYMBOL) ?? null;
@@ -1085,7 +1107,7 @@ async function bootstrapLevel1(
     if (!position) {
       position = await session.ledger.createLevel1Position(
         openedMarket.contractId,
-        instanceIdForLevel1(session.connection.party),
+        instanceIdForLevel1(session.snapshot.party),
       );
     }
 

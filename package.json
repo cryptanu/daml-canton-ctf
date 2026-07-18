@@ -14,6 +14,9 @@
     "ctf:test": "./scripts/check.sh"
   },
   "dependencies": {
+    "@canton-network/core-splice-provider": "^1.7.0",
+    "@canton-network/core-wallet-dapp-rpc-client": "^1.7.0",
+    "@canton-network/dapp-sdk": "^1.3.0",
     "@daml/types": "^2.10.0",
     "@vitejs/plugin-react": "latest",
     "cors": "^2.8.6",
