@@ -4,8 +4,7 @@ import flagIssuerSource from '../daml/Damlnaut/FlagIssuer.daml?raw';
 import level0Source from '../daml/Damlnaut/Level0.daml?raw';
 import level1Source from '../daml/Damlnaut/Level1.daml?raw';
 import {
-  LEVEL1_MARKET_ALPHA_SYMBOL,
-  LEVEL1_MARKET_BETA_SYMBOL,
+  LEVEL1_OPEN_MARKET_SYMBOL,
   type BootstrapLevel1Response,
   type FlagRecord,
   type Level0InstanceRecord,
@@ -111,24 +110,25 @@ const LEVELS: Level[] = [
     stateLabel: 'live',
     microflowOn: 3,
     summary:
-      'A Position is opened against Market Alpha. The Settle choice accepts a caller-supplied Market contract-id and never asserts it matches the market this Position was opened against. Rebind onto Beta to mint the flag.',
+      'A Position stores one Market contract-id at creation time. The Settle choice accepts a caller-supplied Market contract-id and never asserts it matches the stored market. Submitting the stored market creates a losing proof; rebinding onto any other visible market mints the flag.',
     objective:
-      'Exercise Settle with the Beta market contract-id so the resulting FlagProof carries the Beta symbol and the issuer mints the flag.',
+      'Submit ALPHA first and observe the verifier reject it, then submit a different Market contract-id to demonstrate the rebinding bug.',
     files: [
       { id: 'level1', name: 'Level1.daml', body: level1Source },
       { id: 'issuer', name: 'FlagIssuer.daml', body: flagIssuerSource },
     ],
     steps: [
-      'Open Level 1. The backend seeds Alpha (price 1.0) and Beta (price 100.0) as curator, observed by your party.',
-      'The frontend calls Ledger.create Position { market = Alpha } for you.',
-      'Pick Beta from the market picker and click "rebind and settle". The frontend calls Ledger.exercise Settle { marketCid = Beta } on your Position.',
+      'Open Level 1. The backend seeds several Market contracts as curator, observed by your party.',
+      'The frontend calls Ledger.create Position against the assigned market for you.',
+      'Try the stored ALPHA market first. It settles but produces a non-winning proof.',
+      'Refresh, then paste or fill any other Market contract-id into the target input and click "rebind and settle".',
       'Verify. The backend, as issuer, exercises IssueFlag against the resulting FlagProof.',
     ],
     logLines: [
       'the curator signs the markets and observes the position.',
-      'settle fetches whatever market the caller passes in.',
+      'settle fetches whatever market contract id the caller passes in.',
       'the fix is one line: assert marketCid == market. it is intentionally absent.',
-      'the flagissuer expects the beta symbol carried through the proof.',
+      'the flagissuer rejects the same-market proof and accepts only the rebound proof.',
     ],
   },
   {
@@ -356,13 +356,18 @@ function App() {
   };
 
   const selectLevel1Market = (marketCid: string) => {
-    setLevel1State((current) => ({ ...current, selectedMarketCid: marketCid }));
+    setLevel1State((current) => ({
+      ...current,
+      phase: current.phase === 'error' ? 'ready' : current.phase,
+      selectedMarketCid: marketCid,
+      error: null,
+    }));
   };
 
   const solveLevel1 = async () => {
     const session = walletState.session;
     const position = level1State.position;
-    const marketCid = level1State.selectedMarketCid;
+    const marketCid = level1State.selectedMarketCid?.trim();
     if (!session || !position || !marketCid) return;
 
     setLevel1State((current) => ({
@@ -806,10 +811,7 @@ function Level1ExecutionCard({
     level1State.phase === 'solving' ||
     level1State.phase === 'verifying';
   const { position, markets, selectedMarketCid } = level1State;
-  const marketBySymbol = (symbol: string) =>
-    markets.find((m) => m.payload.symbol === symbol) ?? null;
-  const alpha = marketBySymbol(LEVEL1_MARKET_ALPHA_SYMBOL);
-  const beta = marketBySymbol(LEVEL1_MARKET_BETA_SYMBOL);
+  const targetMarketCid = selectedMarketCid?.trim() ?? '';
 
   return (
     <div className="flow-card">
@@ -842,7 +844,7 @@ function Level1ExecutionCard({
       </div>
 
       <div className="market-picker" role="radiogroup" aria-label="Market picker">
-        <div className="market-picker-head">select the market to settle against</div>
+        <div className="market-picker-head">deployed market contracts</div>
         {markets.length === 0 && (
           <div className="market-picker-empty">
             {connected
@@ -850,35 +852,39 @@ function Level1ExecutionCard({
               : 'connect a wallet first to seed markets.'}
           </div>
         )}
-        {[alpha, beta]
-          .filter((m): m is MarketRecord => !!m)
-          .map((market) => {
-            const isPositionMarket = position?.payload.market === market.contractId;
-            const isSelected = selectedMarketCid === market.contractId;
-            return (
-              <button
-                key={market.contractId}
-                className={`market-option ${isSelected ? 'selected' : ''}`}
-                role="radio"
-                aria-checked={isSelected}
-                onClick={() => onSelectMarket(market.contractId)}
-                disabled={!position || busy || level1State.phase === 'solved'}
-              >
-                <span className="market-symbol">{market.payload.symbol}</span>
-                <span className="market-price">price {market.payload.price}</span>
-                <span className={`market-tag ${isPositionMarket ? 'opened' : 'exploit'}`}>
-                  {isPositionMarket ? 'position opened here' : 'rebind target'}
-                </span>
-              </button>
-            );
-          })}
+        {markets.map((market) => {
+          const isSelected = targetMarketCid === market.contractId;
+          return (
+            <button
+              key={market.contractId}
+              className={`market-option ${isSelected ? 'selected' : ''}`}
+              role="radio"
+              aria-checked={isSelected}
+              onClick={() => onSelectMarket(market.contractId)}
+              disabled={!position || busy || level1State.phase === 'solved'}
+            >
+              <span className="market-symbol">{market.payload.symbol}</span>
+              <span className="market-price">price {market.payload.price}</span>
+              <span className="market-cid">{shortenCid(market.contractId)}</span>
+            </button>
+          );
+        })}
+        <label className="contract-input-wrap">
+          <span>settlement market contract id</span>
+          <input
+            value={selectedMarketCid ?? ''}
+            onChange={(event) => onSelectMarket(event.target.value)}
+            placeholder="paste a Market ContractId, then compare same-market vs rebound behavior"
+            disabled={!position || busy || level1State.phase === 'solved'}
+          />
+        </label>
       </div>
 
       <div className="flow-note">
         {level1State.error ??
           level1State.verificationMessage ??
           (connected
-            ? 'this view will open a position against Alpha and let you exercise Settle against either market.'
+            ? 'this view opens a position against one market and asks you to submit a different Market contract id.'
             : 'connect the wallet first. Level 1 only becomes live once a Canton party exists.')}
       </div>
 
@@ -898,7 +904,7 @@ function Level1ExecutionCard({
           disabled={
             !connected ||
             !position ||
-            !selectedMarketCid ||
+            !targetMarketCid ||
             busy ||
             level1State.phase === 'solved'
           }
@@ -1063,22 +1069,22 @@ async function bootstrapLevel1(
       return;
     }
 
-    // Backend seeds Alpha and Beta as curator (idempotent).
+    // Backend seeds the level's market set as curator (idempotent).
     const seeded = await postJson<BootstrapLevel1Response>(
       `${getApiBase()}/api/levels/1/bootstrap`,
       { party: session.connection.party },
     );
-    const alpha =
-      seeded.markets.find((m) => m.payload.symbol === LEVEL1_MARKET_ALPHA_SYMBOL) ?? null;
-    if (!alpha) {
-      throw new Error('Backend did not return an Alpha market.');
+    const openedMarket =
+      seeded.markets.find((m) => m.payload.symbol === LEVEL1_OPEN_MARKET_SYMBOL) ?? null;
+    if (!openedMarket) {
+      throw new Error(`Backend did not return the ${LEVEL1_OPEN_MARKET_SYMBOL} market.`);
     }
 
     // Position is signatory=player, so we must create it from the browser.
     let position = seeded.position ?? (await session.ledger.findLevel1Position());
     if (!position) {
       position = await session.ledger.createLevel1Position(
-        alpha.contractId,
+        openedMarket.contractId,
         instanceIdForLevel1(session.connection.party),
       );
     }
@@ -1093,8 +1099,10 @@ async function bootstrapLevel1(
       txSummary: null,
       verificationMessage:
         'position opened against ' +
-        (position.payload.market === alpha.contractId ? 'Alpha' : 'an alternate market') +
-        '. pick a market to settle against.',
+        (position.payload.market === openedMarket.contractId
+          ? LEVEL1_OPEN_MARKET_SYMBOL
+          : 'an existing market') +
+        '. submit a different Market contract id to settle.',
       error: null,
     });
   } catch (error) {
@@ -1158,7 +1166,17 @@ async function postJson<T>(input: string, body: unknown): Promise<T> {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unknown error.';
+  const message = error instanceof Error ? error.message : String(error ?? 'Unknown error.');
+
+  if (message.includes('MARKET_NOT_REBOUND')) {
+    return 'This sandbox is still running the older Level 1 DAR. Rebuild and restart the sandbox so ALPHA can submit as a losing proof.';
+  }
+
+  if (message.includes('CONTRACT_NOT_FOUND')) {
+    return 'Canton could not find that contract id. Refresh the session and choose one of the visible Market contracts.';
+  }
+
+  return message;
 }
 
 createRoot(document.getElementById('root')!).render(

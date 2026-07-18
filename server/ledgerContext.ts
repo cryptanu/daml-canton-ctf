@@ -11,10 +11,7 @@ import {
   ENT_POSITION,
   LEVEL0_LEVEL_TAG,
   LEVEL1_LEVEL_TAG,
-  LEVEL1_MARKET_ALPHA_PRICE,
-  LEVEL1_MARKET_ALPHA_SYMBOL,
-  LEVEL1_MARKET_BETA_PRICE,
-  LEVEL1_MARKET_BETA_SYMBOL,
+  LEVEL1_MARKET_CONFIGS,
   LEVEL_ISSUER_CONFIGS,
   MOD_FLAG_ISSUER,
   MOD_LEVEL1,
@@ -42,6 +39,7 @@ export class LedgerContext {
   readonly client: JsonApiClient;
   private state: BootstrapState;
   private bootPromise: Promise<BootstrapState> | null = null;
+  private synchronizerIdPromise: Promise<string> | null = null;
 
   constructor(jsonApiUrl: string = DAML_JSON_API_URL_DEFAULT) {
     this.jsonApiUrl = jsonApiUrl;
@@ -116,8 +114,41 @@ export class LedgerContext {
     } catch {
       // Some sandbox versions gate /v2/parties GET behind auth; fall through.
     }
-    const allocated = await this.client.allocateParty({ partyIdHint: DAMLNAUT_ISSUER_HINT });
-    return allocated.partyDetails.party;
+    try {
+      const allocated = await this.client.allocateParty({
+        partyIdHint: DAMLNAUT_ISSUER_HINT,
+        synchronizerId: await this.resolveSynchronizerId(),
+      });
+      return allocated.partyDetails.party;
+    } catch (error) {
+      if (isPartyAlreadyExistsError(error)) {
+        const parties = await this.client.listParties();
+        const existing = parties.find(
+          (p) => p.party.split('::')[0].toLowerCase() === DAMLNAUT_ISSUER_HINT.toLowerCase(),
+        );
+        if (existing) return existing.party;
+      }
+      throw error;
+    }
+  }
+
+  async resolveSynchronizerId(): Promise<string> {
+    if (!this.synchronizerIdPromise) {
+      this.synchronizerIdPromise = this.loadSynchronizerId();
+    }
+    return this.synchronizerIdPromise;
+  }
+
+  private async loadSynchronizerId(): Promise<string> {
+    const response = await this.client.connectedSynchronizers();
+    const connected = response.connectedSynchronizers.find(
+      (entry) => entry.permission !== 'PARTICIPANT_PERMISSION_UNSPECIFIED',
+    ) ?? response.connectedSynchronizers[0];
+    if (!connected?.synchronizerId) {
+      this.synchronizerIdPromise = null;
+      throw new Error('No connected synchronizer is available for party allocation.');
+    }
+    return connected.synchronizerId;
   }
 
   private async ensureFlagIssuer(issuer: string, config: LevelIssuerConfig): Promise<string> {
@@ -177,8 +208,8 @@ export class LedgerContext {
   // ---------------------------------------------------------------------------
 
   /**
-   * Seed Alpha and Beta markets for `player` if they don't already exist.
-   * Both markets are signed by the issuer (curator) and observed by the
+   * Seed the configured Level 1 markets for `player` if they don't already exist.
+   * These markets are signed by the issuer (curator) and observed by the
    * player, which is what makes them settleable through the vulnerable
    * Position.Settle choice.
    */
@@ -231,9 +262,11 @@ export class LedgerContext {
       return fresh;
     };
 
-    const alpha = await seed(LEVEL1_MARKET_ALPHA_SYMBOL, LEVEL1_MARKET_ALPHA_PRICE);
-    const beta = await seed(LEVEL1_MARKET_BETA_SYMBOL, LEVEL1_MARKET_BETA_PRICE);
-    return [alpha, beta];
+    const markets: CreatedEvent[] = [];
+    for (const config of LEVEL1_MARKET_CONFIGS) {
+      markets.push(await seed(config.symbol, config.price));
+    }
+    return markets;
   }
 
   async verifyLevel1(solver: string): Promise<VerifyOutcome> {
@@ -250,19 +283,27 @@ export class LedgerContext {
    */
   private async verifyGeneric(solver: string, level: string): Promise<VerifyOutcome> {
     const state = await this.ensureReady();
-    const flagIssuerCid = state.flagIssuers[level];
-    if (!flagIssuerCid) {
-      return { proof: null, flag: null, message: `FlagIssuer for ${level} not initialised.` };
-    }
-
     const issuerEvents = await this.client.activeContractsFor(state.issuer);
+    const config = LEVEL_ISSUER_CONFIGS.find((entry) => entry.level === level);
+    if (!config) {
+      return {
+        proof: null,
+        flag: null,
+        message: `FlagIssuer config for ${level} is missing.`,
+      };
+    }
     const proofTid = templateId(MOD_FLAG_ISSUER, ENT_FLAG_PROOF);
-    const proof = issuerEvents.find(
-      (event) =>
+    const proofs = issuerEvents
+      .filter(
+        (event) =>
         matchesTemplateId(event.templateId, proofTid) &&
         (event.createArgument.solver as string) === solver &&
         (event.createArgument.level as string) === level,
-    );
+      )
+      .sort((a, b) => b.offset - a.offset);
+    const proof =
+      proofs.find((event) => (event.createArgument.proof as string) === config.expectedProof) ??
+      proofs[0];
     if (!proof) {
       return {
         proof: null,
@@ -286,21 +327,57 @@ export class LedgerContext {
       };
     }
 
-    const submit = await this.client.submitAndWait({
-      userId: DAMLNAUT_USER_ID,
-      commandId: `issue-flag-${level}-${solver.slice(-6)}-${Date.now()}`,
-      actAs: [state.issuer],
-      commands: [
-        {
-          ExerciseCommand: {
-            templateId: templateId(MOD_FLAG_ISSUER, ENT_FLAG_ISSUER),
-            contractId: flagIssuerCid,
-            choice: CHOICE_ISSUE_FLAG,
-            choiceArgument: { proofCid: proof.contractId },
+    let flagIssuerCid = state.flagIssuers[level];
+    if (!flagIssuerCid) {
+      flagIssuerCid = await this.refreshFlagIssuer(level, state.issuer);
+    }
+
+    let submit;
+    try {
+      submit = await this.client.submitAndWait({
+        userId: DAMLNAUT_USER_ID,
+        commandId: `issue-flag-${level}-${solver.slice(-6)}-${Date.now()}`,
+        actAs: [state.issuer],
+        commands: [
+          {
+            ExerciseCommand: {
+              templateId: templateId(MOD_FLAG_ISSUER, ENT_FLAG_ISSUER),
+              contractId: flagIssuerCid,
+              choice: CHOICE_ISSUE_FLAG,
+              choiceArgument: { proofCid: proof.contractId },
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
+    } catch (error) {
+      if (isContractNotFoundError(error)) {
+        flagIssuerCid = await this.refreshFlagIssuer(level, state.issuer);
+        submit = await this.client.submitAndWait({
+          userId: DAMLNAUT_USER_ID,
+          commandId: `issue-flag-retry-${level}-${solver.slice(-6)}-${Date.now()}`,
+          actAs: [state.issuer],
+          commands: [
+            {
+              ExerciseCommand: {
+                templateId: templateId(MOD_FLAG_ISSUER, ENT_FLAG_ISSUER),
+                contractId: flagIssuerCid,
+                choice: CHOICE_ISSUE_FLAG,
+                choiceArgument: { proofCid: proof.contractId },
+              },
+            },
+          ],
+        });
+      } else if (isWrongProofError(error)) {
+        return {
+          proof,
+          flag: null,
+          message: `Proof does not satisfy the ${level} verifier.`,
+        };
+      } else {
+        throw error;
+      }
+    }
+
     const after = await this.client.activeContractsFor(state.issuer, {
       atOffset: submit.completionOffset,
     });
@@ -318,6 +395,22 @@ export class LedgerContext {
         : `IssueFlag submitted at ${level} but the resulting Flag was not visible.`,
     };
   }
+
+  private async refreshFlagIssuer(level: string, issuer: string): Promise<string> {
+    const config = LEVEL_ISSUER_CONFIGS.find((entry) => entry.level === level);
+    if (!config) {
+      throw new Error(`Missing issuer config for ${level}.`);
+    }
+    const cid = await this.ensureFlagIssuer(issuer, config);
+    this.state = {
+      ...this.state,
+      flagIssuers: {
+        ...this.state.flagIssuers,
+        [level]: cid,
+      },
+    };
+    return cid;
+  }
 }
 
 export type VerifyOutcome = {
@@ -334,4 +427,16 @@ export type VerifyOutcome = {
 export function matchesTemplateId(actual: string, expected: string): boolean {
   const tail = (s: string) => s.split(':').slice(-2).join(':');
   return tail(actual) === tail(expected);
+}
+
+function isContractNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('CONTRACT_NOT_FOUND');
+}
+
+function isWrongProofError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('WRONG_PROOF');
+}
+
+function isPartyAlreadyExistsError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('Party already exists');
 }

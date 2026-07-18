@@ -35,7 +35,7 @@ template FlagIssuer
   where
     signatory issuer
 
-    choice IssueFlag : ContractId Flag
+    nonconsuming choice IssueFlag : ContractId Flag
       with
         proofCid : ContractId FlagProof
       controller issuer

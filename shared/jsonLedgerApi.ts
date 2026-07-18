@@ -51,6 +51,7 @@ export type SubmitAndWaitResponse = {
 export type AllocatePartyRequest = {
   partyIdHint?: string;
   identityProviderId?: string;
+  synchronizerId?: string;
 };
 
 export type AllocatePartyResponse = {
@@ -89,6 +90,16 @@ export type ActiveContractEntry = {
 };
 
 export type LedgerEndResponse = { offset: number };
+
+export type ConnectedSynchronizer = {
+  synchronizerAlias: string;
+  synchronizerId: string;
+  permission: string;
+};
+
+export type ConnectedSynchronizersResponse = {
+  connectedSynchronizers: ConnectedSynchronizer[];
+};
 
 export type WildcardActiveContractsRequest = {
   eventFormat: {
@@ -137,6 +148,7 @@ export class JsonApiClient {
     return this.postJson<AllocatePartyResponse>('/v2/parties', {
       partyIdHint: req.partyIdHint ?? '',
       identityProviderId: req.identityProviderId ?? '',
+      synchronizerId: req.synchronizerId ?? '',
     });
   }
 
@@ -154,6 +166,10 @@ export class JsonApiClient {
 
   async ledgerEnd(): Promise<LedgerEndResponse> {
     return this.getJson<LedgerEndResponse>('/v2/state/ledger-end');
+  }
+
+  async connectedSynchronizers(): Promise<ConnectedSynchronizersResponse> {
+    return this.getJson<ConnectedSynchronizersResponse>('/v2/state/connected-synchronizers');
   }
 
   async activeContracts(req: WildcardActiveContractsRequest): Promise<ActiveContractEntry[]> {

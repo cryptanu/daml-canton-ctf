@@ -36,12 +36,18 @@ export const LEVEL0_FLAG_VALUE = 'flag{daml_localnet_lvl0_ok}';
 
 // -------- Level 1: market rebinding --------
 export const LEVEL1_LEVEL_TAG = 'level-1';
-export const LEVEL1_EXPECTED_PROOF = 'market-rebind:BETA';
+export const LEVEL1_EXPECTED_PROOF = 'market-rebound';
 export const LEVEL1_FLAG_VALUE = 'flag{market_rebound}';
 export const LEVEL1_MARKET_ALPHA_SYMBOL = 'ALPHA';
 export const LEVEL1_MARKET_ALPHA_PRICE = '1.0';
 export const LEVEL1_MARKET_BETA_SYMBOL = 'BETA';
 export const LEVEL1_MARKET_BETA_PRICE = '100.0';
+export const LEVEL1_MARKET_CONFIGS = [
+  { symbol: LEVEL1_MARKET_ALPHA_SYMBOL, price: LEVEL1_MARKET_ALPHA_PRICE },
+  { symbol: LEVEL1_MARKET_BETA_SYMBOL, price: LEVEL1_MARKET_BETA_PRICE },
+  { symbol: 'GAMMA', price: '12.5' },
+] as const;
+export const LEVEL1_OPEN_MARKET_SYMBOL = LEVEL1_MARKET_ALPHA_SYMBOL;
 export const LEVEL1_POSITION_SIZE = '1.0';
 
 // Canonical list of levels whose FlagIssuer contract the backend seeds

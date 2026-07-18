@@ -8,11 +8,15 @@ import Damlnaut.FlagIssuer
 -- choice below is intentionally vulnerable: it fetches whatever Market
 -- contract-id the caller supplies, without asserting it matches the
 -- Market the Position was actually opened against. The player exploits
--- this by settling their Position against a different Market's price.
+-- this by settling their Position against a different Market contract id.
+--
+-- For CTF feedback, Settle always creates a FlagProof. Settling against
+-- the stored market creates a losing proof; rebinding to any other visible
+-- Market creates the proof that the verifier accepts.
 --
 -- The auditable fix is a single line:
 --     assertMsg "WRONG_MARKET" (marketCid == market)
--- inside Settle. Do not add it here — the level is intentionally broken.
+-- inside Settle. Do not add it here -- the level is intentionally broken.
 
 template Market
   with
@@ -42,10 +46,11 @@ template Position
         marketCid : ContractId Market
       controller player
       do
-        m <- fetch marketCid
+        _ <- fetch marketCid
+        let proofValue = if marketCid == market then "market-not-rebound" else "market-rebound"
         create FlagProof with
           solver     = player
           issuer     = curator
           level      = "level-1"
           instanceId = instanceId
-          proof      = "market-rebind:" <> m.symbol
+          proof      = proofValue

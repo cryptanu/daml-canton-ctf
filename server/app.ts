@@ -62,7 +62,10 @@ export function createApp(): express.Express {
       const body = (req.body ?? {}) as WalletConnectRequest;
       const hintBase = body.partyIdHint?.trim() || DAMLNAUT_PLAYER_HINT_PREFIX;
       const partyIdHint = `${hintBase}-${randomPartySuffix()}`;
-      const allocation = await ledger.client.allocateParty({ partyIdHint });
+      const allocation = await ledger.client.allocateParty({
+        partyIdHint,
+        synchronizerId: await ledger.resolveSynchronizerId(),
+      });
       const response: WalletConnectResponse = {
         party: allocation.partyDetails.party,
         jsonApiUrl: browserJsonApiUrl(req),

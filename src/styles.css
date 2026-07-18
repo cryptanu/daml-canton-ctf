@@ -628,7 +628,7 @@ button {
 
 .market-option {
   display: grid;
-  grid-template-columns: 90px 1fr auto;
+  grid-template-columns: 76px 104px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -670,23 +670,48 @@ button {
   font-size: 12px;
 }
 
-.market-tag {
-  padding: 2px 8px;
-  border: 1px solid var(--line);
+.market-cid {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contract-input-wrap {
+  display: grid;
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.contract-input-wrap span {
   color: var(--text-faint);
   font-family: 'IBM Plex Mono', monospace;
   font-size: 10px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: lowercase;
 }
 
-.market-tag.opened {
-  color: var(--text-soft);
+.contract-input-wrap input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-deep) 54%, transparent);
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
-.market-tag.exploit {
-  color: var(--amber);
-  border-color: var(--amber-dim);
+.contract-input-wrap input:focus {
+  outline: 1px solid var(--phosphor-dim);
+  border-color: var(--phosphor);
+}
+
+.contract-input-wrap input:disabled {
+  opacity: 0.55;
 }
 
 .plain-view {
@@ -748,6 +773,11 @@ footer {
   .flow-actions {
     width: 100%;
     flex-direction: column;
+  }
+
+  .market-option {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .action-button {

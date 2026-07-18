@@ -4,6 +4,44 @@ import Daml.Script
 import Damlnaut.FlagIssuer
 import Damlnaut.Level1
 
+assertMarketSolves
+  : Party
+  -> Party
+  -> ContractId FlagIssuer
+  -> ContractId Market
+  -> Text
+  -> Decimal
+  -> Script (ContractId Flag)
+assertMarketSolves curator player issuerCid alphaCid symbol price = do
+  targetCid <- submit curator do
+    createCmd Market with
+      curator = curator
+      player  = player
+      symbol  = symbol
+      price   = price
+
+  positionCid <- submit player do
+    createCmd Position with
+      player     = player
+      curator    = curator
+      market     = alphaCid
+      size       = 1.0
+      instanceId = "level-1-" <> symbol <> "-rebound"
+
+  proofCid <- submit player do
+    exerciseCmd positionCid Settle with marketCid = targetCid
+
+  Some proof <- queryContractId player proofCid
+  assertMsg ("REBOUND_PROOF_MISMATCH_" <> symbol) (proof.proof == "market-rebound")
+
+  flagCid <- submit curator do
+    exerciseCmd issuerCid IssueFlag with proofCid = proofCid
+
+  Some flag <- queryContractId player flagCid
+  assertMsg ("FLAG_VALUE_MISMATCH_" <> symbol) (flag.value == "flag{market_rebound}")
+
+  pure flagCid
+
 -- Reference solve for Level 1 (Market Rebinding). Kept out of the web UI's
 -- displayed source tab; used only by scripts/check.sh and daml test.
 solveLevel1 : Script (ContractId Flag)
@@ -16,10 +54,10 @@ solveLevel1 = script do
     createCmd FlagIssuer with
       issuer        = curator
       level         = "level-1"
-      expectedProof = "market-rebind:BETA"
+      expectedProof = "market-rebound"
       flagValue     = "flag{market_rebound}"
 
-  -- Two markets observed by the player.
+  -- Several markets observed by the player.
   alphaCid <- submit curator do
     createCmd Market with
       curator = curator
@@ -27,12 +65,19 @@ solveLevel1 = script do
       symbol  = "ALPHA"
       price   = 1.0
 
-  betaCid <- submit curator do
+  _ <- submit curator do
     createCmd Market with
       curator = curator
       player  = player
       symbol  = "BETA"
       price   = 100.0
+
+  gammaCid <- submit curator do
+    createCmd Market with
+      curator = curator
+      player  = player
+      symbol  = "GAMMA"
+      price   = 12.5
 
   -- Player opens a Position against Alpha.
   positionCid <- submit player do
@@ -43,9 +88,9 @@ solveLevel1 = script do
       size       = 1.0
       instanceId = "level-1-solution"
 
-  -- The rebind: settle the Alpha-opened position against Beta's price.
+  -- The rebind: settle the Alpha-opened position against any other market.
   proofCid <- submit player do
-    exerciseCmd positionCid Settle with marketCid = betaCid
+    exerciseCmd positionCid Settle with marketCid = gammaCid
 
   -- Curator (as issuer) mints the final flag from the proof.
   flagCid <- submit curator do
@@ -57,3 +102,63 @@ solveLevel1 = script do
   assertMsg "FLAG_VALUE_MISMATCH"    (flag.value    == "flag{market_rebound}")
 
   pure flagCid
+
+alphaDoesNotSolveLevel1 : Script ()
+alphaDoesNotSolveLevel1 = script do
+  curator <- allocateParty "level1-alpha-control-curator"
+  player  <- allocateParty "level1-alpha-control-player"
+
+  issuerCid <- submit curator do
+    createCmd FlagIssuer with
+      issuer        = curator
+      level         = "level-1"
+      expectedProof = "market-rebound"
+      flagValue     = "flag{market_rebound}"
+
+  alphaCid <- submit curator do
+    createCmd Market with
+      curator = curator
+      player  = player
+      symbol  = "ALPHA"
+      price   = 1.0
+
+  positionCid <- submit player do
+    createCmd Position with
+      player     = player
+      curator    = curator
+      market     = alphaCid
+      size       = 1.0
+      instanceId = "level-1-alpha-control"
+
+  proofCid <- submit player do
+    exerciseCmd positionCid Settle with marketCid = alphaCid
+
+  Some proof <- queryContractId player proofCid
+  assertMsg "ALPHA_SHOULD_CREATE_LOSING_PROOF" (proof.proof == "market-not-rebound")
+
+  submitMustFail curator do
+    exerciseCmd issuerCid IssueFlag with proofCid = proofCid
+
+allReboundMarketsSolveLevel1 : Script ()
+allReboundMarketsSolveLevel1 = script do
+  curator <- allocateParty "level1-all-targets-curator"
+  player  <- allocateParty "level1-all-targets-player"
+
+  issuerCid <- submit curator do
+    createCmd FlagIssuer with
+      issuer        = curator
+      level         = "level-1"
+      expectedProof = "market-rebound"
+      flagValue     = "flag{market_rebound}"
+
+  alphaCid <- submit curator do
+    createCmd Market with
+      curator = curator
+      player  = player
+      symbol  = "ALPHA"
+      price   = 1.0
+
+  _ <- assertMarketSolves curator player issuerCid alphaCid "BETA" 100.0
+  _ <- assertMarketSolves curator player issuerCid alphaCid "GAMMA" 12.5
+
+  pure ()

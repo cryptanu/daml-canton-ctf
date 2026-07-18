@@ -170,19 +170,25 @@ export class DamlnautLedger {
       size: LEVEL1_POSITION_SIZE,
       instanceId,
     };
-    await this.api.submitAndWait({
-      userId: this.connection.userId || DAMLNAUT_USER_ID,
-      commandId: `l1-open-${instanceId}`,
-      actAs: [this.party],
-      commands: [
-        {
-          CreateCommand: {
-            templateId: templateId(MOD_LEVEL1, ENT_POSITION),
-            createArguments: payload as unknown as Record<string, unknown>,
+    try {
+      await this.api.submitAndWait({
+        userId: this.connection.userId || DAMLNAUT_USER_ID,
+        commandId: makeCommandId('l1-open', instanceId),
+        actAs: [this.party],
+        commands: [
+          {
+            CreateCommand: {
+              templateId: templateId(MOD_LEVEL1, ENT_POSITION),
+              createArguments: payload as unknown as Record<string, unknown>,
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
+    } catch (error) {
+      if (!isDuplicateCommandError(error)) {
+        throw error;
+      }
+    }
     const created = await this.findLevel1Position();
     if (!created) {
       throw new Error('Position was created but not visible on refresh.');
@@ -196,7 +202,7 @@ export class DamlnautLedger {
   ): Promise<FlagProofRecord> {
     const submit = await this.api.submitAndWait({
       userId: this.connection.userId || DAMLNAUT_USER_ID,
-      commandId: `l1-settle-${position.payload.instanceId}`,
+      commandId: makeCommandId('l1-settle', position.payload.instanceId),
       actAs: [this.party],
       commands: [
         {
@@ -213,12 +219,15 @@ export class DamlnautLedger {
       atOffset: submit.completionOffset,
     });
     const proofTid = templateId(MOD_FLAG_ISSUER, ENT_FLAG_PROOF);
-    const proof = proofEvents.find(
-      (event) =>
-        matchesTemplateIdBrowser(event.templateId, proofTid) &&
-        (event.createArgument.solver as string) === this.party &&
-        (event.createArgument.level as string) === LEVEL1_LEVEL_TAG,
-    );
+    const proof = proofEvents
+      .filter(
+        (event) =>
+          matchesTemplateIdBrowser(event.templateId, proofTid) &&
+          (event.createArgument.solver as string) === this.party &&
+          (event.createArgument.level as string) === LEVEL1_LEVEL_TAG &&
+          (event.createArgument.instanceId as string) === position.payload.instanceId,
+      )
+      .sort((a, b) => b.offset - a.offset)[0];
     if (!proof) {
       throw new Error('Settle executed but no Level 1 FlagProof is visible.');
     }
@@ -244,19 +253,25 @@ export class DamlnautLedger {
       instanceId,
       instructions: 'Exercise SubmitLevel0 through the wallet to mint a FlagProof.',
     };
-    await this.api.submitAndWait({
-      userId: this.connection.userId || DAMLNAUT_USER_ID,
-      commandId: `l0-boot-${instanceId}`,
-      actAs: [this.party],
-      commands: [
-        {
-          CreateCommand: {
-            templateId: templateId(MOD_LEVEL0, ENT_LEVEL0_INSTANCE),
-            createArguments: payload,
+    try {
+      await this.api.submitAndWait({
+        userId: this.connection.userId || DAMLNAUT_USER_ID,
+        commandId: makeCommandId('l0-boot', instanceId),
+        actAs: [this.party],
+        commands: [
+          {
+            CreateCommand: {
+              templateId: templateId(MOD_LEVEL0, ENT_LEVEL0_INSTANCE),
+              createArguments: payload,
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
+    } catch (error) {
+      if (!isDuplicateCommandError(error)) {
+        throw error;
+      }
+    }
     const created = await this.findLevel0Instance();
     if (!created) {
       throw new Error('Level0Instance was created but not visible on refresh.');
@@ -267,7 +282,7 @@ export class DamlnautLedger {
   async submitLevel0(instance: Level0InstanceRecord): Promise<FlagProofRecord> {
     const submit = await this.api.submitAndWait({
       userId: this.connection.userId || DAMLNAUT_USER_ID,
-      commandId: `l0-solve-${instance.payload.instanceId}`,
+      commandId: makeCommandId('l0-solve', instance.payload.instanceId),
       actAs: [this.party],
       commands: [
         {
@@ -312,4 +327,19 @@ function safeJson(text: string): { error?: string } | null {
   } catch {
     return null;
   }
+}
+
+function makeCommandId(prefix: string, subject: string): string {
+  return `${prefix}-${subject}-${Date.now()}-${randomSuffix()}`;
+}
+
+function randomSuffix(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().slice(0, 8);
+  }
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function isDuplicateCommandError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('DUPLICATE_COMMAND');
 }
