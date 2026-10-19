@@ -4,6 +4,16 @@ All notable changes to this project will be documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Backend uploads every DAR in `packages/` and `.daml/dist/` to the participant at boot (`POST /v2/packages`), so a fresh Canton needs no `--dar` flag. Disable with `DAR_AUTO_UPLOAD=0`.
+- `GET/POST /api/admin/packages` (bearer `ADMIN_TOKEN`) lists / re-uploads DARs to hot-swap levels.
+- `/api/health` now reports Canton reachability and package count.
+- Rate limit on `/api/levels/*` (`RATE_LIMIT_PER_MIN`, default 30) and JSON request logging.
+- Add `@walletconnect/sign-client` + `@walletconnect/types` (optional peers of `@canton-network/dapp-sdk`); without them the production bundle crashed at load with an unresolved import.
+- `scripts/demo-solve.mts`: headless end-to-end solve of Levels 0 and 1; `docs/walkthrough.mp4`: narrated platform walkthrough.
+- Remove retired stubs; add GitHub Actions typecheck + build.
+
 ## [0.2.0] — 2026-07-08
 
 Move the entire Level 0 loop off the mock provider onto a real Canton

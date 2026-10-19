@@ -1,3 +1,5 @@
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { JsonApiClient, type CreatedEvent } from '../shared/jsonLedgerApi.js';
 import {
   CHOICE_ISSUE_FLAG,
@@ -76,8 +78,55 @@ export class LedgerContext {
     return this.bootPromise;
   }
 
+  /** Directories scanned for DARs to push at boot / on demand. */
+  static darDirs(): string[] {
+    return (process.env.DAR_DIRS ?? 'packages:.daml/dist').split(':');
+  }
+
+  async listLocalDars(): Promise<string[]> {
+    const found: string[] = [];
+    for (const dir of LedgerContext.darDirs()) {
+      try {
+        for (const f of await readdir(dir)) {
+          if (f.endsWith('.dar')) found.push(path.join(dir, f));
+        }
+      } catch {
+        // directory absent — fine
+      }
+    }
+    return found;
+  }
+
+  /** Upload every local DAR. Canton treats re-uploads of known packages as no-ops. */
+  async uploadLocalDars(): Promise<string[]> {
+    const uploaded: string[] = [];
+    for (const file of await this.listLocalDars()) {
+      await this.client.uploadDar(new Uint8Array(await readFile(file)));
+      uploaded.push(file);
+    }
+    return uploaded;
+  }
+
+  /** Canton reachability + package count, for /api/health. */
+  async probeCanton(): Promise<{ reachable: boolean; packageCount: number; error: string | null }> {
+    try {
+      const ids = await this.client.listPackageIds();
+      return { reachable: true, packageCount: ids.length, error: null };
+    } catch (error) {
+      return {
+        reachable: false,
+        packageCount: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   private async boot(): Promise<BootstrapState> {
     try {
+      if (process.env.DAR_AUTO_UPLOAD !== '0') {
+        const uploaded = await this.uploadLocalDars();
+        if (uploaded.length) console.log(`[damlnaut] uploaded DARs: ${uploaded.join(', ')}`);
+      }
       const issuer = await this.resolveIssuerParty();
       const flagIssuers: Record<string, string> = {};
       for (const config of LEVEL_ISSUER_CONFIGS) {

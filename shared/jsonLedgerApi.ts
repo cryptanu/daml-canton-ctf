@@ -164,6 +164,28 @@ export class JsonApiClient {
     return this.postJson<SubmitAndWaitResponse>('/v2/commands/submit-and-wait', req);
   }
 
+  /** Upload a DAR (raw bytes) to the participant. Idempotent on Canton. */
+  async uploadDar(dar: Uint8Array): Promise<void> {
+    const headers = this.headers();
+    headers['Content-Type'] = 'application/octet-stream';
+    const res = await this.fetchImpl(`${this.baseUrl}/v2/packages`, {
+      method: 'POST',
+      headers,
+      body: dar as unknown as BodyInit,
+    });
+    await this.readJson<unknown>(res, '/v2/packages');
+  }
+
+  async listPackageIds(): Promise<string[]> {
+    const raw = await this.getJson<{ packageIds?: string[] }>('/v2/packages');
+    return raw.packageIds ?? [];
+  }
+
+  async getPackageStatus(packageId: string): Promise<string> {
+    const raw = await this.getJson<{ packageStatus?: string }>(`/v2/package-status/${packageId}`);
+    return raw.packageStatus ?? 'UNKNOWN';
+  }
+
   async ledgerEnd(): Promise<LedgerEndResponse> {
     return this.getJson<LedgerEndResponse>('/v2/state/ledger-end');
   }

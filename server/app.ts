@@ -1,5 +1,6 @@
 import cors from 'cors';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import {
   DAML_JSON_API_URL_DEFAULT,
   ENT_FLAG,
@@ -39,11 +40,69 @@ export function createApp(): express.Express {
 
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
+  app.use((req, res, next) => {
+    const started = Date.now();
+    res.on('finish', () => {
+      console.log(
+        JSON.stringify({
+          t: new Date().toISOString(),
+          method: req.method,
+          path: req.path,
+          status: res.statusCode,
+          ms: Date.now() - started,
+        }),
+      );
+    });
+    next();
+  });
 
-  app.get('/api/health', (_req, res) => {
+  const verifyLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: Number(process.env.RATE_LIMIT_PER_MIN ?? 30),
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  app.use('/api/levels', verifyLimiter);
+
+  const requireAdmin: express.RequestHandler = (req, res, next) => {
+    const token = process.env.ADMIN_TOKEN;
+    if (!token) {
+      res.status(503).json({ error: 'ADMIN_TOKEN not configured; admin endpoints disabled' });
+      return;
+    }
+    if (req.header('authorization') !== `Bearer ${token}`) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    next();
+  };
+
+  app.get('/api/admin/packages', requireAdmin, async (_req, res) => {
+    try {
+      res.json({
+        local: await ledger.listLocalDars(),
+        packageIds: await ledger.client.listPackageIds(),
+      });
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  app.post('/api/admin/packages', requireAdmin, async (_req, res) => {
+    try {
+      const uploaded = await ledger.uploadLocalDars();
+      res.json({ uploaded });
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  app.get('/api/health', async (_req, res) => {
     const state = ledger.getState();
+    const canton = await ledger.probeCanton();
     res.json({
       ok: true,
+      canton,
       service: 'damlnaut-dapp-backend',
       jsonApiUrl,
       issuerReady: state.ready,
