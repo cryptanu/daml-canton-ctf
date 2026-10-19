@@ -12,6 +12,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rate limit on `/api/levels/*` (`RATE_LIMIT_PER_MIN`, default 30) and JSON request logging.
 - Add `@walletconnect/sign-client` + `@walletconnect/types` (optional peers of `@canton-network/dapp-sdk`); without them the production bundle crashed at load with an unresolved import.
 - `scripts/demo-solve.mts`: headless end-to-end solve of Levels 0 and 1; `docs/walkthrough.mp4`: narrated platform walkthrough.
+- Upgrade `@canton-network/dapp-sdk` to 1.8.0: 1.4.0 lacked the origin-broadcast handshake that Wallet Gateway 1.12 login waits for, so the gateway popup hung on "Loading networks…".
 - Remove retired stubs; add GitHub Actions typecheck + build.
 
 ## [0.2.0] — 2026-07-08
