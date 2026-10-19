@@ -37,6 +37,9 @@ export const ledger = new LedgerContext(jsonApiUrl);
 
 export function createApp(): express.Express {
   const app = express();
+  // Behind Caddy / Vercel the client IP arrives via X-Forwarded-For; without
+  // this every player shares one rate-limit bucket.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
