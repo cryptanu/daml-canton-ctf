@@ -250,10 +250,13 @@ function App() {
     if (openLevelId !== 'level-1' || !walletState.session) {
       return;
     }
-    const party = walletState.session.snapshot.party;
-    if (level1State.position?.payload.player === party && level1State.markets.length > 0) {
+    // Only auto-bootstrap from a pristine state. Settle consumes the
+    // Position (position -> null); re-running here would open a fresh
+    // Position every time and clobber the verifying/solved state.
+    if (level1State.phase !== 'idle') {
       return;
     }
+    const party = walletState.session.snapshot.party;
     if (bootstrap1Ref.current === party) {
       return;
     }
@@ -264,8 +267,7 @@ function App() {
   }, [
     openLevelId,
     walletState.session,
-    level1State.position?.payload.player,
-    level1State.markets.length,
+    level1State.phase,
   ]);
 
   const connect = async () => {
@@ -417,6 +419,21 @@ function App() {
         flag: verify.flag,
         verificationMessage: verify.message,
       }));
+
+      if (!verify.verified) {
+        // Non-winning settle: the Position is gone. Open one fresh Position
+        // (once, explicitly) so the player can retry with another market.
+        const alpha = level1State.markets.find(
+          (m) => m.payload.symbol === LEVEL1_OPEN_MARKET_SYMBOL,
+        );
+        if (alpha) {
+          const next = await session.ledger.createLevel1Position(
+            alpha.contractId,
+            instanceIdForLevel1(session.snapshot.party),
+          );
+          setLevel1State((current) => ({ ...current, position: next }));
+        }
+      }
     } catch (error) {
       setLevel1State((current) => ({
         ...current,
