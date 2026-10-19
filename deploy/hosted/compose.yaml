@@ -1,0 +1,82 @@
+# Hosted Damlnaut stack: Postgres-backed Canton + backend + Wallet Gateway + Caddy.
+# Run from repo root after `./damlw build`:
+#   docker compose -p damlnaut -f deploy/hosted/compose.yaml --env-file deploy/hosted/.env up -d --build
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+services:
+  postgres:
+    image: postgres:16@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging: *logging
+    environment:
+      POSTGRES_USER: canton
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - ledger-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U canton']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  canton:
+    image: eclipse-temurin:17-jre@sha256:13cc28a6cc72a38ce1f00c906be3580c1a3e604b8984d694f369a96742abc93b
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging: *logging
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    command: [java, '-Xmx2g', '-jar', /opt/canton.jar, sandbox, '--config', /config/storage.conf, '--json-api-port', '7575', '--log-file-appender', 'off', '--log-level-stdout', INFO]
+    volumes:
+      - ${CANTON_JAR:?set CANTON_JAR}:/opt/canton.jar:ro
+      - ./storage.conf:/config/storage.conf:ro
+    healthcheck:
+      test: [CMD-SHELL, 'curl --fail --silent --max-time 5 http://127.0.0.1:7575/v2/state/connected-synchronizers | grep -q synchronizerId']
+      interval: 15s
+      timeout: 6s
+      start_period: 120s
+      retries: 6
+    depends_on:
+      postgres: { condition: service_healthy }
+  backend:
+    build: { context: '${REPO_ROOT:-../..}', dockerfile: deploy/hosted/Dockerfile.backend }
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DAML_JSON_API_URL: http://canton:7575
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN}
+      GATEWAY_LEDGER_USER: damlnaut-user
+    depends_on:
+      canton: { condition: service_healthy }
+  gateway:
+    build: { context: '${REPO_ROOT:-../..}/deploy/hosted', dockerfile: Dockerfile.gateway }
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      LEDGER_API_URL: http://canton:7575
+      GATEWAY_CLIENT_SECRET: ${GATEWAY_CLIENT_SECRET:?set GATEWAY_CLIENT_SECRET}
+      GATEWAY_ALLOWED_ORIGINS: ${GATEWAY_ALLOWED_ORIGINS:-*}
+    volumes:
+      - gateway-data:/gw/data
+    depends_on:
+      canton: { condition: service_healthy }
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      API_SITE: ${API_SITE:-http://api.localhost}
+      WALLET_SITE: ${WALLET_SITE:-http://wallet.localhost}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [backend, gateway]
+volumes:
+  ledger-data:
+  gateway-data:
+  caddy-data:

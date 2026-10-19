@@ -1,0 +1,6 @@
+{$API_SITE:http://api.localhost} {
+	reverse_proxy backend:8787
+}
+{$WALLET_SITE:http://wallet.localhost} {
+	reverse_proxy gateway:3030
+}

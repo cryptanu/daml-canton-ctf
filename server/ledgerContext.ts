@@ -128,6 +128,9 @@ export class LedgerContext {
         if (uploaded.length) console.log(`[damlnaut] uploaded DARs: ${uploaded.join(', ')}`);
       }
       const issuer = await this.resolveIssuerParty();
+      // Wallet Gateway grants party rights to this participant user when a
+      // player creates a party; it must already exist.
+      await this.client.ensureUser(process.env.GATEWAY_LEDGER_USER ?? 'damlnaut-user');
       const flagIssuers: Record<string, string> = {};
       for (const config of LEVEL_ISSUER_CONFIGS) {
         flagIssuers[config.level] = await this.ensureFlagIssuer(issuer, config);

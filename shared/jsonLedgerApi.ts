@@ -176,6 +176,19 @@ export class JsonApiClient {
     await this.readJson<unknown>(res, '/v2/packages');
   }
 
+  /** Create a participant user; a 409 (already exists) is treated as success. */
+  async ensureUser(id: string): Promise<void> {
+    try {
+      await this.postJson<unknown>('/v2/users', {
+        user: { id, primaryParty: '', isDeactivated: false, identityProviderId: '' },
+        rights: [],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/-> (409|400)|ALREADY_EXISTS/.test(message)) throw error;
+    }
+  }
+
   async listPackageIds(): Promise<string[]> {
     const raw = await this.getJson<{ packageIds?: string[] }>('/v2/packages');
     return raw.packageIds ?? [];

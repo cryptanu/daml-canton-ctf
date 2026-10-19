@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.vercel
+log
+*.log
+deploy
+docs
+scratchpad.md
+CLAUDE.md
+.env*
