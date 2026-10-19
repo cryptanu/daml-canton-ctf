@@ -2,7 +2,7 @@
   "kernel": { "id": "remote-da", "clientType": "remote" },
   "logging": { "level": "info", "format": "json" },
   "server": {
-    "port": 3030,
+    "port": ${GATEWAY_PORT},
     "dappPath": "/api/v0/dapp",
     "userPath": "/api/v0/user",
     "allowedOrigins": "${GATEWAY_ALLOWED_ORIGINS}",

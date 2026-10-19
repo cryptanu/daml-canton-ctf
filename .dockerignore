@@ -4,7 +4,11 @@ dist
 .vercel
 log
 *.log
-deploy
+deploy/persistence
+deploy/railway/canton
+deploy/railway/postgres
+deploy/hosted/*
+!deploy/hosted/gateway
 docs
 scratchpad.md
 CLAUDE.md
