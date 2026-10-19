@@ -5,8 +5,6 @@ dist
 log
 *.log
 deploy/persistence
-deploy/railway/canton
-deploy/railway/postgres
 deploy/hosted/*
 !deploy/hosted/gateway
 docs

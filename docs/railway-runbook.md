@@ -40,8 +40,8 @@ these names):
 
 | Service | Root Directory | Dockerfile | Public domain | Volume |
 |---|---|---|---|---|
-| `postgres` | `deploy/railway/postgres` | `Dockerfile` (auto) | **No** | mount `/var/lib/postgresql/data` |
-| `canton` | `deploy/railway/canton` | `Dockerfile` (auto) | **No** | none |
+| `postgres` | `/` | set `RAILWAY_DOCKERFILE_PATH=deploy/railway/postgres/Dockerfile` | **No** | mount `/var/lib/postgresql/data` |
+| `canton` | `/` | set `RAILWAY_DOCKERFILE_PATH=deploy/railway/canton/Dockerfile` | **No** | none |
 | `backend` | `/` | set `RAILWAY_DOCKERFILE_PATH=deploy/railway/backend/Dockerfile` | **Yes** | none |
 | `gateway` | `/` | set `RAILWAY_DOCKERFILE_PATH=deploy/railway/gateway/Dockerfile` | **Yes** | mount `/gw/data` |
 
