@@ -260,7 +260,7 @@ export class DamlnautLiveLedger {
       instructions: 'Exercise SubmitLevel0 to mint a FlagProof visible to the issuer.',
     };
     await dappSDK.prepareExecuteAndWait({
-      commandId: `l0-boot-${instanceId}`,
+      commandId: `l0-boot-${instanceId}-${nonce()}`,
       actAs: [this.party],
       commands: [
         {
@@ -280,7 +280,7 @@ export class DamlnautLiveLedger {
 
   async submitLevel0(instance: Level0InstanceRecord): Promise<FlagProofRecord> {
     const result = await dappSDK.prepareExecuteAndWait({
-      commandId: `l0-solve-${instance.payload.instanceId}`,
+      commandId: `l0-solve-${instance.payload.instanceId}-${nonce()}`,
       actAs: [this.party],
       commands: [
         {
@@ -321,7 +321,7 @@ export class DamlnautLiveLedger {
       instanceId,
     };
     await dappSDK.prepareExecuteAndWait({
-      commandId: `l1-open-${instanceId}`,
+      commandId: `l1-open-${instanceId}-${nonce()}`,
       actAs: [this.party],
       commands: [
         {
@@ -341,7 +341,7 @@ export class DamlnautLiveLedger {
 
   async settleLevel1(position: PositionRecord, marketCid: string): Promise<FlagProofRecord> {
     const result = await dappSDK.prepareExecuteAndWait({
-      commandId: `l1-settle-${position.payload.instanceId}`,
+      commandId: `l1-settle-${position.payload.instanceId}-${nonce()}`,
       actAs: [this.party],
       commands: [
         {
@@ -370,6 +370,13 @@ export class DamlnautLiveLedger {
       updateId: result.tx.payload.updateId,
     };
   }
+}
+
+// Canton dedups submissions by (user, actAs, commandId) within a window, so a
+// retry with a fixed id is rejected as DUPLICATE_COMMAND even when the first
+// attempt succeeded. Each user action gets a fresh id.
+function nonce(): string {
+  return crypto.randomUUID().slice(0, 8);
 }
 
 function toRecord<T>(event: CreatedEvent): { contractId: string; templateId: string; payload: T } {
