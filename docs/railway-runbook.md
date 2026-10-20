@@ -79,7 +79,11 @@ ADMIN_TOKEN=<random>
 LEDGER_API_URL=http://${{canton.RAILWAY_PRIVATE_DOMAIN}}:7575
 GATEWAY_CLIENT_SECRET=<random>
 GATEWAY_ALLOWED_ORIGINS=https://<your-frontend-origin>
+GATEWAY_PUBLIC_URL=https://<gateway-domain>
 ```
+`GATEWAY_PUBLIC_URL` is required behind Railway's proxy: without it the gateway
+advertises `http://localhost:<PORT>/login/` and the wallet popup opens the wrong page.
+
 
 Deploy order: `postgres`, then `canton`, then `backend` and `gateway`.
 Canton takes a few minutes the first time (it initialises its synchronizer).
@@ -133,8 +137,10 @@ read the `gateway` service logs.
   private network is IPv6-only for your environment, the backend and gateway
   cannot reach it. Check Railway's networking docs; if needed, bind Canton to
   `::` or add `-Djava.net.preferIPv6Addresses=true` via `JAVA_OPTS`.
-- **Memory [verify]:** Canton runs with `-Xmx2g` (set via `JAVA_OPTS`). Make
-  sure the plan allows at least ~3 GB for that service, or it will be killed.
+- **Memory:** on the Free plan (1 GB per service) Canton only ran with
+  `JAVA_OPTS=-Xmx320m -XX:MaxMetaspaceSize=460m -XX:ReservedCodeCacheSize=32m -Xss256k
+  -XX:MaxDirectMemorySize=48m -XX:+UseSerialGC`. Smaller metaspace caps crash-loop with
+  `OutOfMemoryError: Metaspace`. It is tight; a paid plan with 3-4 GB and `-Xmx2g` is safer.
 - **Cost:** usage-based billing means a JVM running continuously costs real
   money; check current pricing before leaving it up.
 - **Auth:** the gateway uses a shared client secret and Canton has no auth.

@@ -1,5 +1,5 @@
 {
-  "kernel": { "id": "remote-da", "clientType": "remote" },
+  "kernel": { "id": "remote-da", "clientType": "remote", "publicUrl": "${GATEWAY_PUBLIC_URL}" },
   "logging": { "level": "info", "format": "json" },
   "server": {
     "port": ${GATEWAY_PORT},
