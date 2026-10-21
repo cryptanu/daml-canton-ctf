@@ -12,8 +12,10 @@ participant boundary:
 headless solve of Levels 0 and 1 with the player on participant2; player party
 reported `isLocal=true` only on participant2 and the issuer only on participant1;
 full restart (`down` then `up`, no `-v`) keeps the same issuer and the bootstrap
-script is idempotent; Level 0 solved through the real UI with the Wallet Gateway.
-**Not verified:** Level 1 through the UI, hosting on a VM, Railway, TLS, any
+script is idempotent; Levels 0 and 1 solved through the real UI with the Wallet
+Gateway (Level 1: ALPHA gives one losing proof and reopens exactly one position,
+BETA gives the winning proof; the ledger shows exactly two Level 1 proofs, no
+looping). **Not verified:** hosting on a VM, Railway, TLS, any
 multi-operator / multi-JVM topology.
 
 ## Run
@@ -42,3 +44,13 @@ When `PLAYER_JSON_API_URL` is unset the backend behaves as a single-participant 
 ## Memory
 
 All four nodes share one JVM (`JAVA_OPTS=-Xmx3g`). Plan for 4 GB or more.
+
+## Isolation caveat (read before building privacy levels)
+
+The browser/gateway read path queries with `filtersForAnyParty`, and the gateway's
+single ledger user (`damlnaut-user`) holds rights on every player party. Canton is
+therefore **not** isolating players from each other at the API level: only the app's
+client-side `player == party` filter does. A client reading "as player" on
+`participant1` (which does not host the player) still returned other parties'
+visible contracts for the same reason. For levels where "who can see what" is the
+exploit, query with `filtersByParty` only and use one ledger user per player.
