@@ -1,0 +1,15 @@
+// Idempotent: safe on first boot and on every restart (state lives in Postgres).
+if (!sequencer1.health.initialized()) {
+  bootstrap.synchronizer_local()
+}
+if (participant1.synchronizers.list_registered().isEmpty) {
+  participant1.synchronizers.connect_local(sequencer1, alias = "da")
+}
+if (participant2.synchronizers.list_registered().isEmpty) {
+  participant2.synchronizers.connect_local(sequencer1, alias = "da")
+}
+utils.retry_until_true {
+  participant1.synchronizers.active("da") && participant2.synchronizers.active("da")
+}
+participant1.health.ping(participant2)
+println("DAMLNAUT_NETWORK_READY participant1+participant2 connected to da")

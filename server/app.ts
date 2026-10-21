@@ -85,6 +85,7 @@ export function createApp(): express.Express {
       res.json({
         local: await ledger.listLocalDars(),
         packageIds: await ledger.client.listPackageIds(),
+        playerPackageIds: ledger.playerClient ? await ledger.playerClient.listPackageIds() : undefined,
       });
     } catch (error) {
       respondWithError(res, error);
@@ -139,7 +140,10 @@ export function createApp(): express.Express {
       const markets = await ledger.bootstrapLevel1(body.party);
       const positionTid = templateId('Damlnaut.Level1', 'Position');
 
-      const playerEvents = await ledger.client.activeContractsFor(body.party);
+      // Read as the issuer (an observer of every Position): in a multi-participant
+      // setup the player's party is hosted elsewhere and this participant cannot
+      // read as it.
+      const playerEvents = await ledger.client.activeContractsFor(ledger.getState().issuer);
       const positionEvent = playerEvents.find(
         (event) =>
           matchesTemplateId(event.templateId, positionTid) &&

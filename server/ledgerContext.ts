@@ -39,6 +39,9 @@ export type BootstrapState = {
 export class LedgerContext {
   readonly jsonApiUrl: string;
   readonly client: JsonApiClient;
+  /** Second participant hosting player parties (multi-participant setups); null when single-participant. */
+  readonly playerClient: JsonApiClient | null;
+  readonly playerJsonApiUrl: string | null;
   private state: BootstrapState;
   private bootPromise: Promise<BootstrapState> | null = null;
   private synchronizerIdPromise: Promise<string> | null = null;
@@ -46,6 +49,9 @@ export class LedgerContext {
   constructor(jsonApiUrl: string = DAML_JSON_API_URL_DEFAULT) {
     this.jsonApiUrl = jsonApiUrl;
     this.client = new JsonApiClient({ baseUrl: jsonApiUrl });
+    const playerUrl = (process.env.PLAYER_JSON_API_URL ?? '').trim();
+    this.playerJsonApiUrl = playerUrl && playerUrl !== jsonApiUrl ? playerUrl : null;
+    this.playerClient = this.playerJsonApiUrl ? new JsonApiClient({ baseUrl: this.playerJsonApiUrl }) : null;
     this.state = {
       jsonApiUrl,
       issuer: '',
@@ -100,18 +106,27 @@ export class LedgerContext {
   /** Upload every local DAR. Canton treats re-uploads of known packages as no-ops. */
   async uploadLocalDars(): Promise<string[]> {
     const uploaded: string[] = [];
+    const clients = this.playerClient ? [this.client, this.playerClient] : [this.client];
     for (const file of await this.listLocalDars()) {
-      await this.client.uploadDar(new Uint8Array(await readFile(file)));
+      const bytes = new Uint8Array(await readFile(file));
+      // Every participant that will touch these templates must have the package vetted.
+      for (const c of clients) await c.uploadDar(bytes);
       uploaded.push(file);
     }
     return uploaded;
   }
 
   /** Canton reachability + package count, for /api/health. */
-  async probeCanton(): Promise<{ reachable: boolean; packageCount: number; error: string | null }> {
+  async probeCanton(): Promise<{ reachable: boolean; packageCount: number; playerParticipant?: { reachable: boolean; packageCount: number }; error: string | null }> {
     try {
       const ids = await this.client.listPackageIds();
-      return { reachable: true, packageCount: ids.length, error: null };
+      const playerIds = this.playerClient ? await this.playerClient.listPackageIds() : null;
+      return {
+        reachable: true,
+        packageCount: ids.length,
+        ...(playerIds ? { playerParticipant: { reachable: true, packageCount: playerIds.length } } : {}),
+        error: null,
+      };
     } catch (error) {
       return {
         reachable: false,
@@ -130,7 +145,8 @@ export class LedgerContext {
       const issuer = await this.resolveIssuerParty();
       // Wallet Gateway grants party rights to this participant user when a
       // player creates a party; it must already exist.
-      await this.client.ensureUser(process.env.GATEWAY_LEDGER_USER ?? 'damlnaut-user');
+      // The gateway connects to the player participant when there is one.
+      await (this.playerClient ?? this.client).ensureUser(process.env.GATEWAY_LEDGER_USER ?? 'damlnaut-user');
       const flagIssuers: Record<string, string> = {};
       for (const config of LEVEL_ISSUER_CONFIGS) {
         flagIssuers[config.level] = await this.ensureFlagIssuer(issuer, config);

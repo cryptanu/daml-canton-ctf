@@ -6,14 +6,16 @@ import { DAMLNAUT_USER_ID, templateId } from '../shared/damlnaut.js';
 
 const API = process.env.DAML_JSON_API_URL ?? 'http://localhost:7575';
 const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:8787';
-const c = new JsonApiClient({ baseUrl: API });
+// In a multi-participant setup the player lives on PLAYER_JSON_API_URL (participant2).
+const PLAYER_API = process.env.PLAYER_JSON_API_URL ?? API;
+const c = new JsonApiClient({ baseUrl: PLAYER_API });
 const step = (m: string) => console.log(`\n\x1b[36m▶ ${m}\x1b[0m`);
 const post = async (p: string, body: unknown) =>
   (await fetch(`${BACKEND}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json() as Promise<any>;
 
 const health = await (await fetch(`${BACKEND}/api/health`)).json() as any;
 const issuer: string = health.issuer;
-step(`backend ready, issuer = ${issuer.slice(0, 28)}…`);
+step(`backend ready, issuer = ${issuer.slice(0, 28)}…  player participant = ${PLAYER_API}`);
 
 const sync = (await c.connectedSynchronizers()).connectedSynchronizers[0].synchronizerId;
 const hint = `damlnaut-player-${Date.now().toString(36)}`;

@@ -1,0 +1,63 @@
+# Multi-participant Damlnaut stack: participant1 (issuer) + participant2 (players)
+# on one synchronizer, Postgres storage. Run from a path Docker can bind-mount.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+services:
+  postgres:
+    build: { context: '${REPO_ROOT:-../..}', dockerfile: deploy/multi/postgres/Dockerfile }
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: [ "ledger-data:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U canton']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  canton:
+    build: { context: '${REPO_ROOT:-../..}', dockerfile: deploy/multi/canton/Dockerfile }
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    healthcheck:
+      # both participants' JSON APIs up AND each connected to a synchronizer
+      test: [CMD-SHELL, 'for p in 7575 7576; do curl -fs --max-time 5 http://127.0.0.1:$$p/v2/state/connected-synchronizers | grep -q synchronizerId || exit 1; done']
+      interval: 15s
+      timeout: 12s
+      start_period: 180s
+      retries: 8
+    depends_on:
+      postgres: { condition: service_healthy }
+  backend:
+    build: { context: '${REPO_ROOT:-../..}', dockerfile: deploy/railway/backend/Dockerfile }
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      PORT: "8787"
+      DAML_JSON_API_URL: http://canton:7575
+      PLAYER_JSON_API_URL: http://canton:7576
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN}
+    ports: [ "${BACKEND_PORT:-18787}:8787" ]
+    depends_on:
+      canton: { condition: service_healthy }
+  gateway:
+    build: { context: '${REPO_ROOT:-../..}', dockerfile: deploy/railway/gateway/Dockerfile }
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      PORT: "3030"
+      LEDGER_API_URL: http://canton:7576
+      GATEWAY_CLIENT_SECRET: ${GATEWAY_CLIENT_SECRET:?set GATEWAY_CLIENT_SECRET}
+      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-http://localhost:13030}
+      GATEWAY_ALLOWED_ORIGINS: "*"
+    ports: [ "${GATEWAY_PORT:-13030}:3030" ]
+    volumes: [ "gateway-data:/gw/data" ]
+    depends_on:
+      canton: { condition: service_healthy }
+volumes:
+  ledger-data:
+  gateway-data:
