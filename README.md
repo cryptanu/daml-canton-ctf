@@ -6,6 +6,8 @@ Live demo: [https://daml-canton-ctf.vercel.app/](https://daml-canton-ctf.vercel.
 
 Want to add a level? See [CONTRIBUTING.md](CONTRIBUTING.md) for the level and pull request style guide.
 
+Licensed under the [MIT License](LICENSE).
+
 Implementation notes for the current browser-driven session-wallet branch live at
 [`docs/local-session-wallet-changes.md`](docs/local-session-wallet-changes.md).
 

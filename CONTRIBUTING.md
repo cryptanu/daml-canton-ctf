@@ -184,7 +184,10 @@ point to the Solution file. Maintainers may later move solutions elsewhere.
 
 ## 9. Licensing and credit
 
-This repository does not yet include a license file. Until the maintainers add one, open
-a PR only with work you wrote or have the right to share, and expect the maintainers to
-choose the license it is released under. Credit any source material in the PR and in the
-level's header comment.
+Damlnaut is released under the [MIT License](LICENSE). By opening a pull request you
+confirm that you wrote the work (or have the right to share it) and that it may be
+released under the same MIT License.
+
+Credit any source material in the PR and in the level's header comment. If you reuse
+code or text from another project, keep that project's copyright and license notice
+for those parts.
