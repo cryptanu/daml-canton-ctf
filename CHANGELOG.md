@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Deprecate Vercel hosting. The README now points to the Railway deployment and marks the Vercel section as retired; `vercel.json` and `api/` stay for now and are scheduled for removal.
 - Backend uploads every DAR in `packages/` and `.daml/dist/` to the participant at boot (`POST /v2/packages`), so a fresh Canton needs no `--dar` flag. Disable with `DAR_AUTO_UPLOAD=0`.
 - `GET/POST /api/admin/packages` (bearer `ADMIN_TOKEN`) lists / re-uploads DARs to hot-swap levels.
 - `/api/health` now reports Canton reachability and package count.

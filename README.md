@@ -2,7 +2,7 @@
 
 A beginner-friendly Daml/Canton security CTF inspired by Ethernaut-style levels.
 
-Live demo: [https://daml-canton-ctf.vercel.app/](https://daml-canton-ctf.vercel.app/)
+Hosted demo (Railway): [https://adventurous-warmth-production-c243.up.railway.app](https://adventurous-warmth-production-c243.up.railway.app). Connecting a wallet needs Wallet Gateway credentials, so it is not open to the public yet; see [docs/railway-runbook.md](docs/railway-runbook.md).
 
 Want to add a level? See [CONTRIBUTING.md](CONTRIBUTING.md) for the level and pull request style guide.
 
@@ -105,7 +105,13 @@ If it stalls: `curl http://localhost:8787/api/health` reports whether the
 backend has bootstrapped the issuer. `bootError` there points at whatever
 went wrong on 7575.
 
-## Vercel deploy (frontend + backend as functions)
+## Vercel deploy (deprecated)
+
+> **Deprecated.** Hosting has moved to Railway (see
+> [docs/railway-runbook.md](docs/railway-runbook.md)) and the Docker stacks under
+> `deploy/`. The Vercel deployment is no longer maintained: its backend pointed at a
+> tunnel to a developer laptop and is offline. The notes below are kept for reference
+> only; `vercel.json` and `api/` will be removed in a later change.
 
 The `api/` folder holds a Vercel entrypoint that re-exports the same
 Express app used locally. The frontend static bundle from `npm run build`
@@ -134,8 +140,7 @@ vercel env add DAML_JSON_API_URL   # paste the ngrok URL
 vercel --prod                 # publish
 ```
 
-Current production URL:
-`https://daml-canton-ctf.vercel.app/`
+The old production URL (`https://daml-canton-ctf.vercel.app/`) is retired.
 
 ## Daml regression script
 
