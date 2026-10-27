@@ -4,6 +4,8 @@ A beginner-friendly Daml/Canton security CTF inspired by Ethernaut-style levels.
 
 Live demo: [https://daml-canton-ctf.vercel.app/](https://daml-canton-ctf.vercel.app/)
 
+Want to add a level? See [CONTRIBUTING.md](CONTRIBUTING.md) for the level and pull request style guide.
+
 Implementation notes for the current browser-driven session-wallet branch live at
 [`docs/local-session-wallet-changes.md`](docs/local-session-wallet-changes.md).
 
