@@ -9,14 +9,29 @@ import {
   ENT_FLAG,
   ENT_FLAG_ISSUER,
   ENT_FLAG_PROOF,
+  ENT_CREDIT,
+  ENT_GATEWAY,
+  ENT_HOLDING,
   ENT_MARKET,
+  ENT_ORDER,
   ENT_POSITION,
+  ENT_PRIZE_VAULT,
+  ENT_RECEIPT,
   LEVEL0_LEVEL_TAG,
   LEVEL1_LEVEL_TAG,
   LEVEL1_MARKET_CONFIGS,
+  LEVEL2_LEVEL_TAG,
+  LEVEL2_ORDER_CONFIGS,
+  LEVEL3_ISSUED_AMOUNT,
+  LEVEL3_LEVEL_TAG,
+  LEVEL3_VAULT_PRICE,
+  LEVEL4_LEVEL_TAG,
   LEVEL_ISSUER_CONFIGS,
   MOD_FLAG_ISSUER,
   MOD_LEVEL1,
+  MOD_LEVEL2,
+  MOD_LEVEL3,
+  MOD_LEVEL4,
   templateId,
   type LevelIssuerConfig,
 } from '../shared/damlnaut.js';
@@ -342,6 +357,39 @@ export class LedgerContext {
   }
 
   // ---------------------------------------------------------------------------
+  // Levels 2-4 — curator-signed fixtures seeded per player, generic verifier
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Seed the curator-signed contracts a level needs for `player`, then return
+   * every active contract of that level's templates that concerns the player.
+   * Idempotent: a fixture is created only when no matching contract is active.
+   */
+  async bootstrapLevel(level: GenericLevel, player: string): Promise<CreatedEvent[]> {
+    const state = await this.ensureReady();
+    const issuer = state.issuer;
+    const spec = LEVEL_FIXTURES[level];
+    for (const fixture of spec.fixtures(issuer, player)) {
+      const active = await this.client.activeContractsFor(issuer);
+      if (active.some((event) => fixture.exists(event, player))) continue;
+      await this.client.submitAndWait({
+        userId: DAMLNAUT_USER_ID,
+        commandId: `seed-${level}-${fixture.name}-${player.slice(-6)}-${Date.now()}`,
+        actAs: [issuer],
+        commands: [{ CreateCommand: { templateId: fixture.templateId, createArguments: fixture.args } }],
+      });
+    }
+    // Read as the issuer: it signs every fixture, and in a multi-participant
+    // setup this participant cannot read as the player.
+    const after = await this.client.activeContractsFor(issuer);
+    return after.filter((event) => spec.belongsTo(event, player));
+  }
+
+  async verifyLevel(level: GenericLevel, solver: string): Promise<VerifyOutcome> {
+    return this.verifyGeneric(solver, LEVEL_FIXTURES[level].tag);
+  }
+
+  // ---------------------------------------------------------------------------
   // Shared verifier logic (used by every level).
   // ---------------------------------------------------------------------------
 
@@ -485,6 +533,99 @@ export type VerifyOutcome = {
   proof: CreatedEvent | null;
   flag: CreatedEvent | null;
   message: string;
+};
+
+// -----------------------------------------------------------------------------
+// Level 2-4 fixtures
+// -----------------------------------------------------------------------------
+
+export type GenericLevel = 2 | 3 | 4;
+export const GENERIC_LEVELS: readonly GenericLevel[] = [2, 3, 4];
+
+type Fixture = {
+  name: string;
+  templateId: string;
+  args: Record<string, unknown>;
+  /** True when an active contract already plays this fixture's role for `player`. */
+  exists: (event: CreatedEvent, player: string) => boolean;
+};
+
+type LevelFixtures = {
+  tag: string;
+  fixtures: (issuer: string, player: string) => Fixture[];
+  /** Which active contracts the bootstrap response returns to the player. */
+  belongsTo: (event: CreatedEvent, player: string) => boolean;
+};
+
+const arg = (event: CreatedEvent, field: string) => event.createArgument[field] as string;
+const isTemplate = (event: CreatedEvent, module: string, entity: string) =>
+  matchesTemplateId(event.templateId, templateId(module, entity));
+const instanceIdFor = (level: string, player: string) =>
+  `${level}-${player.split('::')[0] ?? player}`.toLowerCase().slice(0, 60);
+
+const LEVEL_FIXTURES: Record<GenericLevel, LevelFixtures> = {
+  // Level 2: two live orders and one that expired an hour before seeding.
+  // A live order that has itself expired since seeding is replaced, so the
+  // control case keeps producing a losing proof.
+  2: {
+    tag: LEVEL2_LEVEL_TAG,
+    fixtures: (issuer, player) =>
+      LEVEL2_ORDER_CONFIGS.map((config) => ({
+        name: config.label.toLowerCase(),
+        templateId: templateId(MOD_LEVEL2, ENT_ORDER),
+        args: {
+          curator: issuer,
+          player,
+          label: config.label,
+          price: config.price,
+          expiresAt: new Date(Date.now() + config.expiresInMinutes * 60_000).toISOString(),
+          instanceId: instanceIdFor(LEVEL2_LEVEL_TAG, player),
+        },
+        exists: (event, p) =>
+          isTemplate(event, MOD_LEVEL2, ENT_ORDER) &&
+          arg(event, 'player') === p &&
+          arg(event, 'label') === config.label &&
+          (config.expiresInMinutes < 0 || Date.parse(arg(event, 'expiresAt')) > Date.now() + 60 * 60_000),
+      })),
+    belongsTo: (event, player) => isTemplate(event, MOD_LEVEL2, ENT_ORDER) && arg(event, 'player') === player,
+  },
+  // Level 3: one 100.0 holding (only while the player holds none) and the 250.0 prize vault.
+  3: {
+    tag: LEVEL3_LEVEL_TAG,
+    fixtures: (issuer, player) => [
+      {
+        name: 'holding',
+        templateId: templateId(MOD_LEVEL3, ENT_HOLDING),
+        args: { issuer, owner: player, amount: LEVEL3_ISSUED_AMOUNT, instanceId: instanceIdFor(LEVEL3_LEVEL_TAG, player) },
+        exists: (event, p) => isTemplate(event, MOD_LEVEL3, ENT_HOLDING) && arg(event, 'owner') === p,
+      },
+      {
+        name: 'vault',
+        templateId: templateId(MOD_LEVEL3, ENT_PRIZE_VAULT),
+        args: { curator: issuer, player, price: LEVEL3_VAULT_PRICE, instanceId: instanceIdFor(LEVEL3_LEVEL_TAG, player) },
+        exists: (event, p) => isTemplate(event, MOD_LEVEL3, ENT_PRIZE_VAULT) && arg(event, 'player') === p,
+      },
+    ],
+    belongsTo: (event, player) =>
+      (isTemplate(event, MOD_LEVEL3, ENT_HOLDING) && arg(event, 'owner') === player) ||
+      (isTemplate(event, MOD_LEVEL3, ENT_PRIZE_VAULT) && arg(event, 'player') === player),
+  },
+  // Level 4: one gateway on which the player is the relayer.
+  4: {
+    tag: LEVEL4_LEVEL_TAG,
+    fixtures: (issuer, player) => [
+      {
+        name: 'gateway',
+        templateId: templateId(MOD_LEVEL4, ENT_GATEWAY),
+        args: { curator: issuer, relayer: player, instanceId: instanceIdFor(LEVEL4_LEVEL_TAG, player) },
+        exists: (event, p) => isTemplate(event, MOD_LEVEL4, ENT_GATEWAY) && arg(event, 'relayer') === p,
+      },
+    ],
+    belongsTo: (event, player) =>
+      (isTemplate(event, MOD_LEVEL4, ENT_GATEWAY) && arg(event, 'relayer') === player) ||
+      (isTemplate(event, MOD_LEVEL4, ENT_CREDIT) && arg(event, 'holder') === player) ||
+      (isTemplate(event, MOD_LEVEL4, ENT_RECEIPT) && arg(event, 'relayer') === player),
+  },
 };
 
 /**

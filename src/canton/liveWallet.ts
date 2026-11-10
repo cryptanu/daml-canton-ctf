@@ -370,7 +370,56 @@ export class DamlnautLiveLedger {
       updateId: result.tx.payload.updateId,
     };
   }
+
+  // ---- Levels 2-4 ----------------------------------------------------------
+  // The backend seeds and lists the curator-signed contracts. The player
+  // signs every choice here, in the wallet. A choice that creates a
+  // FlagProof is found by comparing the player's proofs before and after.
+
+  async exercise(
+    tag: string,
+    level: string,
+    target: { templateId: string; contractId: string },
+    choice: string,
+    choiceArgument: Record<string, unknown>,
+  ): Promise<ExerciseOutcome> {
+    const proofTid = templateId(MOD_FLAG_ISSUER, ENT_FLAG_PROOF);
+    const proofsFor = async () =>
+      (await this.activeContractsForSelf()).filter(
+        (e) =>
+          matchesTemplateIdBrowser(e.templateId, proofTid) &&
+          (e.createArgument.solver as string) === this.party &&
+          (e.createArgument.level as string) === level,
+      );
+    const before = new Set((await proofsFor()).map((e) => e.contractId));
+    const result = await dappSDK.prepareExecuteAndWait({
+      commandId: `${tag}-${nonce()}`,
+      actAs: [this.party],
+      commands: [
+        {
+          ExerciseCommand: {
+            templateId: target.templateId,
+            contractId: target.contractId,
+            choice,
+            choiceArgument,
+          },
+        },
+      ],
+    });
+    const updateId = result.tx?.payload?.updateId ?? null;
+    const fresh = (await proofsFor()).find((e) => !before.has(e.contractId));
+    return {
+      updateId,
+      proof: fresh ? { ...toRecord<FlagProofRecord['payload']>(fresh), updateId: updateId ?? undefined } : null,
+    };
+  }
 }
+
+export type ExerciseOutcome = {
+  updateId: string | null;
+  /** The FlagProof this exercise created, if it created one. */
+  proof: FlagProofRecord | null;
+};
 
 // Canton dedups submissions by (user, actAs, commandId) within a window, so a
 // retry with a fixed id is rejected as DUPLICATE_COMMAND even when the first

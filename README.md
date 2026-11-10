@@ -156,8 +156,12 @@ npm run ctf:test
 
 ```text
 daml/Damlnaut/FlagIssuer.daml    shared proof + flag issuer templates
-daml/Damlnaut/Level0.daml        level 0 challenge template
-daml/Solution.daml               scripted regression proof (locked in UI)
+daml/Damlnaut/Level0.daml        level 0 challenge template (bare proof)
+daml/Damlnaut/Level1.daml        level 1: market rebinding (unchecked contract id)
+daml/Damlnaut/Level2.daml        level 2: stale order (missing expiry check)
+daml/Damlnaut/Level3.daml        level 3: negative remainder (missing positive-amount check)
+daml/Damlnaut/Level4.daml        level 4: forged callback (excess authority in a choice)
+daml/Solution*.daml              scripted solutions and control cases (locked in UI)
 
 shared/damlnaut.ts               constants + backend<->frontend types
 shared/jsonLedgerApi.ts          minimal typed JSON Ledger API v2 client

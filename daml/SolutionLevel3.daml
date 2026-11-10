@@ -1,0 +1,86 @@
+module SolutionLevel3 where
+
+import Daml.Script
+import Damlnaut.FlagIssuer
+import Damlnaut.Level3
+
+-- Reference solve for Level 3 (Negative Remainder). Used by `daml test` only.
+
+data Vault = Vault with
+  curator    : Party
+  player     : Party
+  issuerCid  : ContractId FlagIssuer
+  holdingCid : ContractId Holding
+  vaultCid   : ContractId PrizeVault
+
+setupVault : Text -> Script Vault
+setupVault tag = do
+  curator <- allocateParty ("level3-curator-" <> tag)
+  player  <- allocateParty ("level3-player-" <> tag)
+  issuerCid <- submit curator do
+    createCmd FlagIssuer with
+      issuer        = curator
+      level         = "level-3"
+      expectedProof = "vault-bought"
+      flagValue     = "flag{negative_remainder}"
+  holdingCid <- submit curator do
+    createCmd Holding with
+      issuer     = curator
+      owner      = player
+      amount     = 100.0
+      instanceId = "level-3-" <> tag
+  vaultCid <- submit curator do
+    createCmd PrizeVault with
+      curator    = curator
+      player     = player
+      price      = 250.0
+      instanceId = "level-3-" <> tag
+  pure Vault with ..
+
+-- Win: split 100.0 into 250.0 and -150.0, then buy with the 250.0 holding.
+solveLevel3 : Script (ContractId Flag)
+solveLevel3 = script do
+  v <- setupVault "solve"
+  (big, small) <- submit v.player do exerciseCmd v.holdingCid Split with splitAmount = 250.0
+  Some bigHolding   <- queryContractId v.player big
+  Some smallHolding <- queryContractId v.player small
+  assertMsg "TOTAL_STILL_CONSERVED" (bigHolding.amount + smallHolding.amount == 100.0)
+  assertMsg "REMAINDER_IS_NEGATIVE" (smallHolding.amount == -150.0)
+  proofCid <- submit v.player do exerciseCmd v.vaultCid Buy with holdingCid = big
+  Some proof <- queryContractId v.player proofCid
+  assertMsg "EXPECTED_BOUGHT_PROOF" (proof.proof == "vault-bought")
+  flagCid <- submit v.curator do exerciseCmd v.issuerCid IssueFlag with proofCid
+  Some flag <- queryContractId v.player flagCid
+  assertMsg "FLAG_VALUE_MISMATCH" (flag.value == "flag{negative_remainder}")
+  pure flagCid
+
+-- Control: the issued 100.0 holding is not enough, and the holding is kept.
+fullHoldingDoesNotSolveLevel3 : Script ()
+fullHoldingDoesNotSolveLevel3 = script do
+  v <- setupVault "control"
+  proofCid <- submit v.player do exerciseCmd v.vaultCid Buy with holdingCid = v.holdingCid
+  Some proof <- queryContractId v.player proofCid
+  assertMsg "EXPECTED_INSUFFICIENT_PROOF" (proof.proof == "insufficient-holding")
+  Some _ <- queryContractId v.player v.holdingCid
+  submitMustFail v.curator do exerciseCmd v.issuerCid IssueFlag with proofCid
+
+-- Control: an honest split (30 / 70) creates no value and cannot win.
+honestSplitDoesNotSolveLevel3 : Script ()
+honestSplitDoesNotSolveLevel3 = script do
+  v <- setupVault "honest"
+  (a, b) <- submit v.player do exerciseCmd v.holdingCid Split with splitAmount = 30.0
+  proofA <- submit v.player do exerciseCmd v.vaultCid Buy with holdingCid = a
+  proofB <- submit v.player do exerciseCmd v.vaultCid Buy with holdingCid = b
+  submitMustFail v.curator do exerciseCmd v.issuerCid IssueFlag with proofCid = proofA
+  submitMustFail v.curator do exerciseCmd v.issuerCid IssueFlag with proofCid = proofB
+
+-- Control: the player cannot issue a holding to themselves.
+playerCannotIssueHoldings : Script ()
+playerCannotIssueHoldings = script do
+  v <- setupVault "forge"
+  submitMustFail v.player do
+    createCmd Holding with
+      issuer     = v.curator
+      owner      = v.player
+      amount     = 1000.0
+      instanceId = "level-3-forge"

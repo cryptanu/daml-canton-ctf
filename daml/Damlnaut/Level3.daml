@@ -1,0 +1,73 @@
+module Damlnaut.Level3 where
+
+import Damlnaut.FlagIssuer
+
+-- Level 3 — Negative Remainder.
+--
+-- The curator issues the player one Holding of 100.0 tokens. The owner can
+-- split a Holding in two. A PrizeVault sells the flag for 250.0 tokens.
+--
+-- Split never checks that the split amount is positive and smaller than the
+-- holding, and Holding has no `ensure` clause. The two halves always add up
+-- to the original amount, so a "total supply" check still passes, but one
+-- half can be worth more than the whole supply.
+--
+-- Source: published 2025 and 2026 Daml reviews reported conservation
+-- errors on holding paths: a lock that left the remainder in an
+-- inconsistent state (High) and a burn-and-mint path with no supply check.
+--
+-- For CTF feedback, Buy always creates a FlagProof. A holding below the
+-- price creates a losing proof. A holding at or above the price creates the
+-- proof that the verifier accepts.
+--
+-- The fix is one line on Holding:
+--     ensure amount > 0.0
+-- Do not add it here. The level is intentionally broken.
+
+template Holding
+  with
+    issuer     : Party
+    owner      : Party
+    amount     : Decimal
+    instanceId : Text
+  where
+    signatory issuer
+    observer owner
+    -- Vulnerable: no `ensure amount > 0.0`.
+
+    choice Split : (ContractId Holding, ContractId Holding)
+      with
+        splitAmount : Decimal
+      controller owner
+      do
+        first  <- create this with amount = splitAmount
+        second <- create this with amount = amount - splitAmount
+        pure (first, second)
+
+template PrizeVault
+  with
+    curator    : Party
+    player     : Party
+    price      : Decimal
+    instanceId : Text
+  where
+    signatory curator
+    observer player
+
+    nonconsuming choice Buy : ContractId FlagProof
+      with
+        holdingCid : ContractId Holding
+      controller player
+      do
+        holding <- fetch holdingCid
+        assertMsg "WRONG_OWNER" (holding.owner == player)
+        assertMsg "WRONG_ISSUER" (holding.issuer == curator)
+        let paid = holding.amount >= price
+        -- A successful purchase spends the holding. A failed one keeps it.
+        if paid then archive holdingCid else pure ()
+        create FlagProof with
+          solver     = player
+          issuer     = curator
+          level      = "level-3"
+          instanceId = instanceId
+          proof      = if paid then "vault-bought" else "insufficient-holding"

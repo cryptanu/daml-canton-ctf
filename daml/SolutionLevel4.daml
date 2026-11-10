@@ -1,0 +1,73 @@
+module SolutionLevel4 where
+
+import Daml.Script
+import Damlnaut.FlagIssuer
+import Damlnaut.Level4
+
+-- Reference solve for Level 4 (Forged Callback). Used by `daml test` only.
+
+data Bridge = Bridge with
+  curator    : Party
+  relayer    : Party
+  issuerCid  : ContractId FlagIssuer
+  gatewayCid : ContractId Gateway
+
+setupBridge : Text -> Script Bridge
+setupBridge tag = do
+  curator <- allocateParty ("level4-curator-" <> tag)
+  relayer <- allocateParty ("level4-relayer-" <> tag)
+  issuerCid <- submit curator do
+    createCmd FlagIssuer with
+      issuer        = curator
+      level         = "level-4"
+      expectedProof = "credit-minted"
+      flagValue     = "flag{forged_callback}"
+  gatewayCid <- submit curator do
+    createCmd Gateway with
+      curator    = curator
+      relayer    = relayer
+      instanceId = "level-4-" <> tag
+  pure Bridge with ..
+
+-- Win: deliver a message whose callback mints credit under the curator's signature.
+solveLevel4 : Script (ContractId Flag)
+solveLevel4 = script do
+  b <- setupBridge "solve"
+  proofCid <- submit b.relayer do
+    exerciseCmd b.gatewayCid Deliver with
+      message = Message with
+        source   = "ethereum"
+        payload  = "transfer 10 to bob"
+        callback = MintCredit 1000.0
+  Some proof <- queryContractId b.relayer proofCid
+  assertMsg "EXPECTED_MINT_PROOF" (proof.proof == "credit-minted")
+  credits <- query @Credit b.relayer
+  assertMsg "CREDIT_MINTED_UNDER_CURATOR" (any (\(_, c) -> c.curator == b.curator && c.amount == 1000.0) credits)
+  flagCid <- submit b.curator do exerciseCmd b.issuerCid IssueFlag with proofCid
+  Some flag <- queryContractId b.relayer flagCid
+  assertMsg "FLAG_VALUE_MISMATCH" (flag.value == "flag{forged_callback}")
+  pure flagCid
+
+-- Control: the intended LogReceipt callback must not win.
+receiptDoesNotSolveLevel4 : Script ()
+receiptDoesNotSolveLevel4 = script do
+  b <- setupBridge "control"
+  proofCid <- submit b.relayer do
+    exerciseCmd b.gatewayCid Deliver with
+      message = Message with
+        source   = "ethereum"
+        payload  = "transfer 10 to bob"
+        callback = LogReceipt
+  Some proof <- queryContractId b.relayer proofCid
+  assertMsg "EXPECTED_RECEIPT_PROOF" (proof.proof == "receipt-logged")
+  submitMustFail b.curator do exerciseCmd b.issuerCid IssueFlag with proofCid
+
+-- Control: without the gateway, the relayer cannot mint credit directly.
+relayerCannotMintDirectly : Script ()
+relayerCannotMintDirectly = script do
+  b <- setupBridge "forge"
+  submitMustFail b.relayer do
+    createCmd Credit with
+      curator = b.curator
+      holder  = b.relayer
+      amount  = 1000.0

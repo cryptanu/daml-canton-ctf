@@ -7,9 +7,10 @@ follow those two as the reference implementations.
 A level is **one deliberately flawed Daml contract plus a verifier**. The player
 finds the flaw, exploits it through a Canton wallet, and the verifier hands out a flag.
 
-> **Status of this project.** Two levels are live (00 The bare proof, 01 Market
-> Rebinding). Level 02 is next. Everything else is a proposal. Open an issue before
-> you build, so we do not both build the same level.
+> **Status of this project.** Five levels are live (00 The bare proof, 01 Market
+> Rebinding, 02 Stale Order, 03 Negative Remainder, 04 Forged Callback). Level 05 is
+> next. Everything else is a proposal. Open an issue before you build, so we do not
+> both build the same level.
 
 ---
 

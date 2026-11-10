@@ -1,0 +1,92 @@
+module Damlnaut.Level4 where
+
+import Damlnaut.FlagIssuer
+
+-- Level 4 — Forged Callback.
+--
+-- A cross-chain Gateway lets a relayer deliver inbound messages. Each
+-- message names a callback that the gateway runs after delivery. The
+-- relayer role should only log receipts. But Deliver runs any callback
+-- with the gateway's full authority, which includes the curator's
+-- signature. A relayer can attach a MintCredit callback and mint credit
+-- that nobody approved.
+--
+-- Source: a published 2026 review of a cross-chain Daml integration
+-- reported that requests could carry forged callbacks that mint tokens
+-- (Medium).
+--
+-- For CTF feedback, Deliver always creates a FlagProof. A LogReceipt
+-- callback creates a losing proof. A MintCredit callback creates the proof
+-- that the verifier accepts.
+--
+-- The fix: the gateway, not the message, decides which callbacks run.
+-- For example, inside Deliver:
+--     assertMsg "CALLBACK_NOT_ALLOWED" (message.callback == LogReceipt)
+-- Do not add it here. The level is intentionally broken.
+
+data Callback
+  = LogReceipt
+  | MintCredit Decimal
+  deriving (Eq, Show)
+
+data Message = Message
+  with
+    source   : Text
+    payload  : Text
+    callback : Callback
+  deriving (Eq, Show)
+
+template Receipt
+  with
+    curator : Party
+    relayer : Party
+    payload : Text
+  where
+    signatory curator
+    observer relayer
+
+template Credit
+  with
+    curator : Party
+    holder  : Party
+    amount  : Decimal
+  where
+    signatory curator
+    observer holder
+
+template Gateway
+  with
+    curator    : Party
+    relayer    : Party
+    instanceId : Text
+  where
+    signatory curator
+    observer relayer
+
+    -- Vulnerable: runs whatever callback the message carries, with the
+    -- curator's authority. Missing:
+    --     assertMsg "CALLBACK_NOT_ALLOWED" (message.callback == LogReceipt)
+    nonconsuming choice Deliver : ContractId FlagProof
+      with
+        message : Message
+      controller relayer
+      do
+        proofValue <- case message.callback of
+          LogReceipt -> do
+            _ <- create Receipt with
+              curator = curator
+              relayer = relayer
+              payload = message.payload
+            pure "receipt-logged"
+          MintCredit amount -> do
+            _ <- create Credit with
+              curator = curator
+              holder  = relayer
+              amount  = amount
+            pure "credit-minted"
+        create FlagProof with
+          solver     = relayer
+          issuer     = curator
+          level      = "level-4"
+          instanceId = instanceId
+          proof      = proofValue

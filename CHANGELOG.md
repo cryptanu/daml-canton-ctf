@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Add Levels 2–4, each based on a finding from a published 2025–2026 Daml audit: **02 Stale Order** (order matching never checks expiry), **03 Negative Remainder** (split has no positive-amount check, so a holding can exceed the supply) and **04 Forged Callback** (a relayer picks a callback that runs with the curator's authority). Each has Daml Script solutions and control cases, shared `/api/levels/{2,3,4}/bootstrap` and `/verify` endpoints, and one shared execution card in the UI. The Daml package moves to 0.2.0, an upgrade-compatible release checked against 0.1.0; `scripts/demo-solve.mts` now solves all five levels and checks every control case.
 - Deprecate Vercel hosting. The README now points to the Railway deployment and marks the Vercel section as retired; `vercel.json` and `api/` stay for now and are scheduled for removal.
 - Backend uploads every DAR in `packages/` and `.daml/dist/` to the participant at boot (`POST /v2/packages`), so a fresh Canton needs no `--dar` flag. Disable with `DAR_AUTO_UPLOAD=0`.
 - `GET/POST /api/admin/packages` (bearer `ADMIN_TOKEN`) lists / re-uploads DARs to hot-swap levels.

@@ -1,0 +1,80 @@
+module SolutionLevel2 where
+
+import Daml.Script
+import DA.Time
+import Damlnaut.FlagIssuer
+import Damlnaut.Level2
+
+-- Reference solve for Level 2 (Stale Order). Used by `daml test` only.
+
+data Book = Book with
+  curator   : Party
+  player    : Party
+  issuerCid : ContractId FlagIssuer
+  liveCid   : ContractId Order
+  staleCid  : ContractId Order
+
+setupBook : Text -> Script Book
+setupBook tag = do
+  curator <- allocateParty ("level2-curator-" <> tag)
+  player  <- allocateParty ("level2-player-" <> tag)
+  issuerCid <- submit curator do
+    createCmd FlagIssuer with
+      issuer        = curator
+      level         = "level-2"
+      expectedProof = "expired-order-filled"
+      flagValue     = "flag{stale_order_filled}"
+  now <- getTime
+  liveCid <- submit curator do
+    createCmd Order with
+      curator    = curator
+      player     = player
+      label      = "LIVE"
+      price      = 105.0
+      expiresAt  = addRelTime now (days 7)
+      instanceId = "level-2-" <> tag
+  staleCid <- submit curator do
+    createCmd Order with
+      curator    = curator
+      player     = player
+      label      = "STALE"
+      price      = 80.0
+      expiresAt  = addRelTime now (hours (-1))
+      instanceId = "level-2-" <> tag
+  pure Book with ..
+
+-- Win: fill the order that expired an hour ago.
+solveLevel2 : Script (ContractId Flag)
+solveLevel2 = script do
+  b <- setupBook "solve"
+  proofCid <- submit b.player do exerciseCmd b.staleCid Take
+  Some proof <- queryContractId b.player proofCid
+  assertMsg "EXPECTED_EXPIRED_PROOF" (proof.proof == "expired-order-filled")
+  flagCid <- submit b.curator do exerciseCmd b.issuerCid IssueFlag with proofCid
+  Some flag <- queryContractId b.player flagCid
+  assertMsg "FLAG_VALUE_MISMATCH" (flag.value == "flag{stale_order_filled}")
+  pure flagCid
+
+-- Control: filling the live order is legitimate and must not win.
+liveOrderDoesNotSolveLevel2 : Script ()
+liveOrderDoesNotSolveLevel2 = script do
+  b <- setupBook "control"
+  proofCid <- submit b.player do exerciseCmd b.liveCid Take
+  Some proof <- queryContractId b.player proofCid
+  assertMsg "EXPECTED_LIVE_PROOF" (proof.proof == "live-order-filled")
+  submitMustFail b.curator do exerciseCmd b.issuerCid IssueFlag with proofCid
+
+-- Control: only the curator can post orders, so the player cannot
+-- create a pre-expired order of their own.
+playerCannotPostOrders : Script ()
+playerCannotPostOrders = script do
+  b <- setupBook "forge"
+  now <- getTime
+  submitMustFail b.player do
+    createCmd Order with
+      curator    = b.curator
+      player     = b.player
+      label      = "FORGED"
+      price      = 1.0
+      expiresAt  = addRelTime now (hours (-1))
+      instanceId = "level-2-forge"

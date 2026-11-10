@@ -50,6 +50,48 @@ export const LEVEL1_MARKET_CONFIGS = [
 export const LEVEL1_OPEN_MARKET_SYMBOL = LEVEL1_MARKET_ALPHA_SYMBOL;
 export const LEVEL1_POSITION_SIZE = '1.0';
 
+// -------- Level 2: stale order (missing expiry check) --------
+export const MOD_LEVEL2 = 'Damlnaut.Level2';
+export const ENT_ORDER = 'Order';
+export const CHOICE_TAKE = 'Take';
+export const LEVEL2_LEVEL_TAG = 'level-2';
+export const LEVEL2_EXPECTED_PROOF = 'expired-order-filled';
+export const LEVEL2_FLAG_VALUE = 'flag{stale_order_filled}';
+/** Orders the curator seeds. `expiresInMinutes` is relative to bootstrap time; negative = already expired. */
+export const LEVEL2_ORDER_CONFIGS = [
+  { label: 'LIVE-105', price: '105.0', expiresInMinutes: 7 * 24 * 60 },
+  { label: 'LIVE-110', price: '110.0', expiresInMinutes: 3 * 24 * 60 },
+  { label: 'STALE-80', price: '80.0', expiresInMinutes: -60 },
+] as const;
+
+// -------- Level 3: negative remainder (missing positive-amount check) --------
+export const MOD_LEVEL3 = 'Damlnaut.Level3';
+export const ENT_HOLDING = 'Holding';
+export const ENT_PRIZE_VAULT = 'PrizeVault';
+export const CHOICE_SPLIT = 'Split';
+export const CHOICE_BUY = 'Buy';
+export const LEVEL3_LEVEL_TAG = 'level-3';
+export const LEVEL3_EXPECTED_PROOF = 'vault-bought';
+export const LEVEL3_FLAG_VALUE = 'flag{negative_remainder}';
+export const LEVEL3_ISSUED_AMOUNT = '100.0';
+export const LEVEL3_VAULT_PRICE = '250.0';
+
+// -------- Level 4: forged callback (excess authority in a choice) --------
+export const MOD_LEVEL4 = 'Damlnaut.Level4';
+export const ENT_GATEWAY = 'Gateway';
+export const ENT_CREDIT = 'Credit';
+export const ENT_RECEIPT = 'Receipt';
+export const CHOICE_DELIVER = 'Deliver';
+export const LEVEL4_LEVEL_TAG = 'level-4';
+export const LEVEL4_EXPECTED_PROOF = 'credit-minted';
+export const LEVEL4_FLAG_VALUE = 'flag{forged_callback}';
+/** The message a well-behaved relayer delivers (JSON Ledger API v2 encoding of the Daml Message record). */
+export const LEVEL4_DEFAULT_MESSAGE = {
+  source: 'ethereum',
+  payload: 'transfer 10 to bob',
+  callback: { tag: 'LogReceipt', value: {} },
+} as const;
+
 // Canonical list of levels whose FlagIssuer contract the backend seeds
 // on boot. Adding a level is: append here, add a Level<N>.daml file,
 // add /api/levels/N/* endpoints.
@@ -62,6 +104,9 @@ export type LevelIssuerConfig = {
 export const LEVEL_ISSUER_CONFIGS: readonly LevelIssuerConfig[] = [
   { level: LEVEL0_LEVEL_TAG, expectedProof: LEVEL0_EXPECTED_PROOF, flagValue: LEVEL0_FLAG_VALUE },
   { level: LEVEL1_LEVEL_TAG, expectedProof: LEVEL1_EXPECTED_PROOF, flagValue: LEVEL1_FLAG_VALUE },
+  { level: LEVEL2_LEVEL_TAG, expectedProof: LEVEL2_EXPECTED_PROOF, flagValue: LEVEL2_FLAG_VALUE },
+  { level: LEVEL3_LEVEL_TAG, expectedProof: LEVEL3_EXPECTED_PROOF, flagValue: LEVEL3_FLAG_VALUE },
+  { level: LEVEL4_LEVEL_TAG, expectedProof: LEVEL4_EXPECTED_PROOF, flagValue: LEVEL4_FLAG_VALUE },
 ];
 
 // Template-id builder. Daml 3.4's JSON Ledger API accepts package-name
@@ -192,3 +237,48 @@ export type VerifyLevel1Response = {
   verified: boolean;
   message: string;
 };
+
+// -------- Levels 2-4: generic shapes --------
+
+/** Any active contract the UI lists for a level (orders, holdings, vault, gateway). */
+export type LedgerRecord<T = Record<string, unknown>> = {
+  contractId: string;
+  templateId: string;
+  payload: T;
+};
+
+export type OrderPayload = {
+  curator: string;
+  player: string;
+  label: string;
+  price: string;
+  expiresAt: string; // Daml Time, ISO-8601
+  instanceId: string;
+};
+
+export type HoldingPayload = {
+  issuer: string;
+  owner: string;
+  amount: string;
+  instanceId: string;
+};
+
+export type PrizeVaultPayload = {
+  curator: string;
+  player: string;
+  price: string;
+  instanceId: string;
+};
+
+export type GatewayPayload = {
+  curator: string;
+  relayer: string;
+  instanceId: string;
+};
+
+/** Levels 2-4 share one request and response shape for bootstrap and verify. */
+export type LevelRequest = { party: string };
+export type BootstrapLevelResponse = {
+  contracts: LedgerRecord[];
+};
+export type VerifyLevelResponse = VerifyLevel1Response;

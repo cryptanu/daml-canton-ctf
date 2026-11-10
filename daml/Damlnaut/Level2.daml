@@ -1,0 +1,46 @@
+module Damlnaut.Level2 where
+
+import Damlnaut.FlagIssuer
+
+-- Level 2 — Stale Order.
+--
+-- The curator posts sell orders on a small order book. Each order has an
+-- expiry time. The Take choice lets the player fill an order, but it never
+-- compares the ledger time with the expiry. An order that expired an hour
+-- ago can still be filled at its old price.
+--
+-- Source: a published 2025 review of a Daml order-matching engine reported
+-- "missing expiration validation during order matching" (Medium).
+--
+-- For CTF feedback, Take always creates a FlagProof. Filling a live order
+-- creates a losing proof. Filling an expired order creates the proof that
+-- the verifier accepts.
+--
+-- The fix is one line inside Take:
+--     assertMsg "ORDER_EXPIRED" (now < expiresAt)
+-- Do not add it here. The level is intentionally broken.
+
+template Order
+  with
+    curator    : Party
+    player     : Party
+    label      : Text
+    price      : Decimal
+    expiresAt  : Time
+    instanceId : Text
+  where
+    signatory curator
+    observer player
+
+    -- Vulnerable: no `assertMsg "ORDER_EXPIRED" (now < expiresAt)`.
+    choice Take : ContractId FlagProof
+      controller player
+      do
+        now <- getTime
+        let proofValue = if now >= expiresAt then "expired-order-filled" else "live-order-filled"
+        create FlagProof with
+          solver     = player
+          issuer     = curator
+          level      = "level-2"
+          instanceId = instanceId
+          proof      = proofValue

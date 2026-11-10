@@ -9,6 +9,9 @@ import {
   templateId,
   type BootstrapLevel1Request,
   type BootstrapLevel1Response,
+  type BootstrapLevelResponse,
+  type LevelRequest,
+  type VerifyLevelResponse,
   type FlagPayload,
   type FlagProofPayload,
   type MarketPayload,
@@ -20,7 +23,7 @@ import {
   type VerifyLevel1Request,
   type VerifyLevel1Response,
 } from '../shared/damlnaut.js';
-import { LedgerContext, matchesTemplateId, type VerifyOutcome } from './ledgerContext.js';
+import { GENERIC_LEVELS, LedgerContext, matchesTemplateId, type VerifyOutcome } from './ledgerContext.js';
 
 export const jsonApiUrl = process.env.DAML_JSON_API_URL ?? DAML_JSON_API_URL_DEFAULT;
 export const ledger = new LedgerContext(jsonApiUrl);
@@ -31,6 +34,8 @@ export const ledger = new LedgerContext(jsonApiUrl);
 //   POST /api/levels/0/verify        — mint level-0 flag from an existing FlagProof
 //   POST /api/levels/1/bootstrap     — seed level-1 markets for a player
 //   POST /api/levels/1/verify        — mint level-1 flag from an existing FlagProof
+//   POST /api/levels/{2,3,4}/bootstrap — seed curator-signed fixtures, list them
+//   POST /api/levels/{2,3,4}/verify    — mint the level's flag from a FlagProof
 //
 // All player-side reads and writes go through the wallet's own participant
 // via @canton-network/dapp-sdk. The backend owns the issuer identity only.
@@ -183,6 +188,44 @@ export function createApp(): express.Express {
       respondWithError(res, error);
     }
   });
+
+  // Levels 2-4 share one bootstrap and one verify handler.
+  for (const level of GENERIC_LEVELS) {
+    app.post(`/api/levels/${level}/bootstrap`, async (req, res) => {
+      try {
+        const body = (req.body ?? {}) as LevelRequest;
+        if (!body.party) {
+          res.status(400).json({ error: 'party is required' });
+          return;
+        }
+        const events = await ledger.bootstrapLevel(level, body.party);
+        const response: BootstrapLevelResponse = {
+          contracts: events.map((event) => ({
+            contractId: event.contractId,
+            templateId: event.templateId,
+            payload: event.createArgument,
+          })),
+        };
+        res.json(response);
+      } catch (error) {
+        respondWithError(res, error);
+      }
+    });
+
+    app.post(`/api/levels/${level}/verify`, async (req, res) => {
+      try {
+        const body = (req.body ?? {}) as LevelRequest;
+        if (!body.party) {
+          res.status(400).json({ error: 'party is required' });
+          return;
+        }
+        const outcome = await ledger.verifyLevel(level, body.party);
+        res.json(verifyResponse<VerifyLevelResponse>(outcome));
+      } catch (error) {
+        respondWithError(res, error);
+      }
+    });
+  }
 
   return app;
 }

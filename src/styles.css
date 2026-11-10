@@ -714,6 +714,42 @@ button {
   opacity: 0.55;
 }
 
+/* Levels 2-4 */
+.market-option.level-row {
+  cursor: default;
+}
+
+.market-cid.warn,
+.flow-note.warn {
+  color: var(--amber);
+}
+
+.action-button.small {
+  padding: 7px 12px;
+}
+
+.contract-input-wrap textarea.message-editor {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-deep) 54%, transparent);
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.contract-input-wrap textarea.message-editor:focus {
+  outline: 1px solid var(--phosphor-dim);
+  border-color: var(--phosphor);
+}
+
+.market-picker .flow-actions {
+  margin-top: 4px;
+}
+
 .plain-view {
   min-height: 360px;
 }

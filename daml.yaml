@@ -1,10 +1,11 @@
 sdk-version: 3.4.10
 name: daml-canton-ctf
 source: daml
-version: 0.1.0
+version: 0.2.0
 dependencies:
   - daml-prim
   - daml-stdlib
   - daml-script
 build-options:
   - --target=2.2
+upgrades: packages/daml-canton-ctf-0.1.0.dar
